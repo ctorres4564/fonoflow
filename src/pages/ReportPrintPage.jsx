@@ -3,6 +3,8 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { doc, getDoc, collection, getDocs, orderBy, query } from 'firebase/firestore'
 import { db } from '../firebase/config'
 import { getAnamnesis } from '../services/anamnesisService'
+import { getEvolutionAmendments } from '../services/patientService'
+import RichContentRenderer from '../components/patients/RichContentRenderer'
 
 const anamnesisPrintFields = [
   ['interviewDate', 'Data da entrevista'], ['informant', 'Informante'],
@@ -31,6 +33,33 @@ function ObjectiveProgressPrint({ progress = [] }) {
           <div key={item.objectiveId || item.description}>
             <p className="text-xs font-semibold text-neutral-800">{item.description} — {item.status}</p>
             {item.performance && <p className="whitespace-pre-wrap text-xs text-neutral-600">{item.performance}</p>}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function VoidedNotice({ evolution }) {
+  return (
+    <p className="mt-1 text-xs font-bold uppercase tracking-wider text-red-700">
+      Evolução anulada em {evolution.voidedAt?.toDate ? evolution.voidedAt.toDate().toLocaleDateString('pt-BR') : '—'} — motivo: {evolution.voidReason}
+    </p>
+  )
+}
+
+function AmendmentsPrint({ amendments = [] }) {
+  if (!amendments.length) return null
+  return (
+    <div className="mt-3 rounded border border-neutral-200 bg-neutral-50 p-3">
+      <p className="text-xs font-bold uppercase tracking-wider text-neutral-600">Retificações</p>
+      <div className="mt-2 space-y-2">
+        {amendments.map((amendment) => (
+          <div key={amendment.id}>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
+              {amendment.createdAt?.toDate ? amendment.createdAt.toDate().toLocaleString('pt-BR') : 'Data não disponível'}
+            </p>
+            <RichContentRenderer content={amendment.content} plainText={amendment.plainText} className="text-xs text-neutral-700" />
           </div>
         ))}
       </div>
@@ -121,12 +150,17 @@ function ReportPrintPage() {
           ...doc.data(),
         }))
         const selectedIds = new Set(selectedEvolutionIds)
-        setEvolutions(evolutionsList.filter((evolution) => {
+        const filteredEvolutions = evolutionsList.filter((evolution) => {
           if (selectedIds.size > 0) return selectedIds.has(evolution.id)
           if (dateFrom && evolution.date < dateFrom) return false
           if (dateTo && evolution.date > dateTo) return false
           return true
-        }))
+        })
+        const evolutionsWithAmendments = await Promise.all(filteredEvolutions.map(async (evolution) => ({
+          ...evolution,
+          amendments: await getEvolutionAmendments(id, evolution.id),
+        })))
+        setEvolutions(evolutionsWithAmendments)
 
       } catch (error) {
         console.error(error)
@@ -253,7 +287,7 @@ function ReportPrintPage() {
             <p className="mt-3 text-sm font-bold text-neutral-800">
               Sessão de {evolutionDraft.date?.split('-').reverse().join('/')} <span className="text-xs font-normal text-neutral-500">({evolutionDraft.duration} minutos)</span>
             </p>
-            <p className="mt-4 whitespace-pre-wrap text-justify text-sm leading-7 text-neutral-800">{evolutionDraft.notes}</p>
+            <RichContentRenderer content={evolutionDraft.richContent} plainText={evolutionDraft.notes} className="mt-4 text-justify text-sm leading-7 text-neutral-800" />
             <p className="mt-6 text-xs italic text-neutral-500">Documento revisado pelo profissional responsável antes da emissão.</p>
           </section>
         )}
@@ -326,8 +360,10 @@ function ReportPrintPage() {
                       <p className="font-bold text-neutral-800">
                         Sessão com data não registrada <span className="text-xs font-normal text-neutral-500">({evol.duration} minutos)</span>
                       </p>
-                      <p className="text-neutral-700 mt-1 text-justify whitespace-pre-wrap">{evol.notes}</p>
+                      {evol.voided && <VoidedNotice evolution={evol} />}
+                      <RichContentRenderer content={evol.richContent} plainText={evol.notes} className="text-neutral-700 mt-1 text-justify" />
                       <ObjectiveProgressPrint progress={evol.objectiveProgress} />
+                      <AmendmentsPrint amendments={evol.amendments} />
                     </div>
                   )
                 }
@@ -342,10 +378,12 @@ function ReportPrintPage() {
                     </p>
                     <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-wider text-neutral-450">
                       Origem: {evol.scheduleId ? 'Agenda' : 'Registro manual'}
-                      {evol.revisionCount > 0 ? ` • Retificado ${evol.revisionCount}x` : ''}
+                      {evol.revisionCount > 0 ? ` • Retificado ${evol.revisionCount}x (legado)` : ''}
                     </p>
-                    <p className="text-neutral-700 mt-1 text-justify whitespace-pre-wrap">{evol.notes}</p>
+                    {evol.voided && <VoidedNotice evolution={evol} />}
+                    <RichContentRenderer content={evol.richContent} plainText={evol.notes} className="text-neutral-700 mt-1 text-justify" />
                     <ObjectiveProgressPrint progress={evol.objectiveProgress} />
+                    <AmendmentsPrint amendments={evol.amendments} />
                   </div>
                 )
               })

@@ -99,44 +99,44 @@ export function createEvolution(patientId, payload) {
   })
 }
 
-export function removeEvolution(patientId, evolutionId) {
-  return deleteDoc(doc(db, 'patients', patientId, 'evolutions', evolutionId))
-}
+// A evolução original é imutável após o registro: exclusão e reescrita de
+// conteúdo não são mais permitidas (ver firestore.rules). Correções passam a
+// ser feitas por meio de retificações (addEvolutionAmendment) ou anulação
+// (annulEvolution), preservando o registro original e a trilha de auditoria.
 
-export async function getEvolutionRevisions(patientId, evolutionId) {
-  const revisionsQuery = query(
-    collection(db, 'patients', patientId, 'evolutions', evolutionId, 'revisions'),
-    orderBy('revisedAt', 'desc'),
+export async function getEvolutionAmendments(patientId, evolutionId) {
+  const amendmentsQuery = query(
+    collection(db, 'patients', patientId, 'evolutions', evolutionId, 'amendments'),
+    orderBy('createdAt', 'asc'),
   )
-  const snapshot = await getDocs(revisionsQuery)
-  return snapshot.docs.map((revisionDoc) => ({ id: revisionDoc.id, ...revisionDoc.data() }))
+  const snapshot = await getDocs(amendmentsQuery)
+  return snapshot.docs.map((amendmentDoc) => ({ id: amendmentDoc.id, ...amendmentDoc.data() }))
 }
 
-export async function reviseEvolution(patientId, evolutionId, nextValues, reason) {
-  const evolutionRef = doc(db, 'patients', patientId, 'evolutions', evolutionId)
-  const revisionRef = doc(collection(evolutionRef, 'revisions'))
-
-  await runTransaction(db, async (transaction) => {
-    const snapshot = await transaction.get(evolutionRef)
-    if (!snapshot.exists()) throw new Error('Evolução não encontrada.')
-
-    const current = snapshot.data()
-    transaction.set(revisionRef, {
-      date: current.date || '',
-      duration: Number(current.duration) || 0,
-      notes: current.notes || '',
-      reason,
-      revisedAt: serverTimestamp(),
-    })
-    transaction.update(evolutionRef, {
-      date: nextValues.date,
-      duration: Number(nextValues.duration) || 0,
-      notes: nextValues.notes,
-      revisedAt: serverTimestamp(),
-      revisionCount: (Number(current.revisionCount) || 0) + 1,
-    })
+// Cria uma retificação sem alterar o conteúdo original da evolução.
+export async function addEvolutionAmendment(patientId, evolutionId, { content, plainText }, authorId) {
+  const amendmentsCollection = collection(db, 'patients', patientId, 'evolutions', evolutionId, 'amendments')
+  const amendmentRef = await addDoc(amendmentsCollection, {
+    content,
+    plainText,
+    authorId,
+    createdAt: serverTimestamp(),
   })
-  await recordAuditEvent({ action: 'evolution.revised', patientId, resourceId: evolutionId, changedFields: ['date', 'duration', 'notes', 'reason'] })
+  await recordAuditEvent({ action: 'evolution.amendment_added', patientId, resourceId: evolutionId, changedFields: ['content', 'plainText'] })
+  return amendmentRef.id
+}
+
+// Anula uma evolução mediante justificativa, sem alterar seu conteúdo original.
+// Só é permitido anular uma vez; o registro permanece visível no histórico.
+export async function annulEvolution(patientId, evolutionId, reason, authorId) {
+  const evolutionRef = doc(db, 'patients', patientId, 'evolutions', evolutionId)
+  await updateDoc(evolutionRef, {
+    voided: true,
+    voidedAt: serverTimestamp(),
+    voidedBy: authorId,
+    voidReason: reason,
+  })
+  await recordAuditEvent({ action: 'evolution.annulled', patientId, resourceId: evolutionId, changedFields: ['voided', 'voidReason'] })
 }
 
 export function subscribeProgressAnalyses(patientId, callback, onError) {
@@ -190,6 +190,9 @@ export async function saveEvolutionDraft(patientId, values, draftId = '') {
     duration: Number(values.duration) || 0,
     notes: values.notes,
     updatedAt: serverTimestamp(),
+  }
+  if (values.richContent) {
+    payload.richContent = values.richContent
   }
   if (draftId) {
     await updateDoc(doc(db, 'patients', patientId, 'evolutionDrafts', draftId), payload)

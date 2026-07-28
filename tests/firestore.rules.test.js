@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
   assertFails,
   assertSucceeds,
@@ -119,28 +119,168 @@ describe('documents subcollection', () => {
   })
 })
 
-describe('evolution revision history', () => {
+describe('evolution immutability', () => {
   beforeEach(async () => {
     await seed('patients/patient-a', { name: 'Paciente A', userId: 'professional-a' })
-    await seed('patients/patient-a/evolutions/evolution-1', { date: '2026-07-16', notes: 'Versão atual' })
   })
 
-  it('permite ao proprietário criar e ler uma versão anterior imutável', async () => {
+  it('permite ao proprietário criar e ler uma evolução', async () => {
     const db = firestoreFor('professional-a')
-    const revisionRef = doc(db, 'patients/patient-a/evolutions/evolution-1/revisions/revision-1')
+    const evolutionRef = doc(db, 'patients/patient-a/evolutions/evolution-1')
 
-    await assertSucceeds(setDoc(revisionRef, { notes: 'Versão anterior', reason: 'Correção clínica' }))
-    await assertSucceeds(getDoc(revisionRef))
-    await assertFails(updateDoc(revisionRef, { notes: 'Tentativa de alteração' }))
-    await assertFails(deleteDoc(revisionRef))
+    await assertSucceeds(setDoc(evolutionRef, {
+      date: '2026-07-16',
+      duration: 50,
+      notes: 'Texto simples',
+      richContent: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Texto simples' }] }] },
+      formatVersion: 1,
+      authorId: 'professional-a',
+    }))
+    await assertSucceeds(getDoc(evolutionRef))
   })
 
-  it('impede outro profissional de acessar o histórico de retificações', async () => {
-    const db = firestoreFor('professional-b')
-    const revisionRef = doc(db, 'patients/patient-a/evolutions/evolution-1/revisions/revision-1')
+  it('impede alterar o conteúdo original da evolução', async () => {
+    await seed('patients/patient-a/evolutions/evolution-1', { date: '2026-07-16', notes: 'Texto original', authorId: 'professional-a' })
+    const db = firestoreFor('professional-a')
+    const evolutionRef = doc(db, 'patients/patient-a/evolutions/evolution-1')
 
-    await assertFails(setDoc(revisionRef, { notes: 'Versão anterior', reason: 'Correção clínica' }))
-    await assertFails(getDoc(revisionRef))
+    await assertFails(updateDoc(evolutionRef, { notes: 'Texto alterado' }))
+    await assertFails(updateDoc(evolutionRef, { date: '2026-07-20' }))
+  })
+
+  it('impede excluir a evolução original', async () => {
+    await seed('patients/patient-a/evolutions/evolution-1', { date: '2026-07-16', notes: 'Texto original' })
+    const db = firestoreFor('professional-a')
+
+    await assertFails(deleteDoc(doc(db, 'patients/patient-a/evolutions/evolution-1')))
+  })
+
+  it('impede outro profissional de ler ou escrever a evolução', async () => {
+    await seed('patients/patient-a/evolutions/evolution-1', { date: '2026-07-16', notes: 'Texto original' })
+    const otherDb = firestoreFor('professional-b')
+
+    await assertFails(getDoc(doc(otherDb, 'patients/patient-a/evolutions/evolution-1')))
+    await assertFails(setDoc(doc(otherDb, 'patients/patient-a/evolutions/evolution-2'), { date: '2026-07-16', notes: 'Acesso indevido' }))
+  })
+
+  it('impede acesso sem autenticação', async () => {
+    await seed('patients/patient-a/evolutions/evolution-1', { date: '2026-07-16', notes: 'Texto original' })
+    const anonymousDb = testEnv.unauthenticatedContext().firestore()
+
+    await assertFails(getDoc(doc(anonymousDb, 'patients/patient-a/evolutions/evolution-1')))
+    await assertFails(setDoc(doc(anonymousDb, 'patients/patient-a/evolutions/evolution-2'), { date: '2026-07-16', notes: 'x' }))
+  })
+})
+
+describe('evolution amendments', () => {
+  beforeEach(async () => {
+    await seed('patients/patient-a', { name: 'Paciente A', userId: 'professional-a' })
+    await seed('patients/patient-a/evolutions/evolution-1', { date: '2026-07-16', notes: 'Versão original', authorId: 'professional-a' })
+  })
+
+  it('permite ao proprietário criar e ler retificações imutáveis, sem poder editá-las ou excluí-las', async () => {
+    const db = firestoreFor('professional-a')
+    const amendmentRef = doc(db, 'patients/patient-a/evolutions/evolution-1/amendments/amendment-1')
+
+    await assertSucceeds(setDoc(amendmentRef, {
+      content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Complemento' }] }] },
+      plainText: 'Complemento',
+      authorId: 'professional-a',
+    }))
+    await assertSucceeds(getDoc(amendmentRef))
+    await assertFails(updateDoc(amendmentRef, { plainText: 'Tentativa de alteração' }))
+    await assertFails(deleteDoc(amendmentRef))
+  })
+
+  it('impede outro profissional de ler ou criar retificações', async () => {
+    const db = firestoreFor('professional-b')
+    const amendmentRef = doc(db, 'patients/patient-a/evolutions/evolution-1/amendments/amendment-1')
+
+    await assertFails(setDoc(amendmentRef, { plainText: 'Acesso indevido' }))
+    await assertFails(getDoc(amendmentRef))
+  })
+
+  it('impede acesso sem autenticação', async () => {
+    const anonymousDb = testEnv.unauthenticatedContext().firestore()
+    const amendmentRef = doc(anonymousDb, 'patients/patient-a/evolutions/evolution-1/amendments/amendment-1')
+
+    await assertFails(setDoc(amendmentRef, { plainText: 'x' }))
+    await assertFails(getDoc(amendmentRef))
+  })
+})
+
+describe('evolution annulment', () => {
+  beforeEach(async () => {
+    await seed('patients/patient-a', { name: 'Paciente A', userId: 'professional-a' })
+    await seed('patients/patient-a/evolutions/evolution-1', { date: '2026-07-16', notes: 'Versão original', authorId: 'professional-a' })
+  })
+
+  it('permite ao proprietário anular mediante justificativa, sem alterar o conteúdo original', async () => {
+    const db = firestoreFor('professional-a')
+    const evolutionRef = doc(db, 'patients/patient-a/evolutions/evolution-1')
+
+    await assertSucceeds(updateDoc(evolutionRef, {
+      voided: true,
+      voidedAt: '2026-07-20T00:00:00.000Z',
+      voidedBy: 'professional-a',
+      voidReason: 'Registro duplicado por engano.',
+    }))
+    const snapshot = await getDoc(evolutionRef)
+    expect(snapshot.data().notes).toBe('Versão original')
+  })
+
+  it('impede anular sem justificativa', async () => {
+    const db = firestoreFor('professional-a')
+    const evolutionRef = doc(db, 'patients/patient-a/evolutions/evolution-1')
+
+    await assertFails(updateDoc(evolutionRef, {
+      voided: true,
+      voidedAt: '2026-07-20T00:00:00.000Z',
+      voidedBy: 'professional-a',
+      voidReason: '',
+    }))
+  })
+
+  it('impede alterar o conteúdo original junto com a anulação', async () => {
+    const db = firestoreFor('professional-a')
+    const evolutionRef = doc(db, 'patients/patient-a/evolutions/evolution-1')
+
+    await assertFails(updateDoc(evolutionRef, {
+      voided: true,
+      voidedAt: '2026-07-20T00:00:00.000Z',
+      voidedBy: 'professional-a',
+      voidReason: 'Tentando também mudar o texto.',
+      notes: 'Texto alterado',
+    }))
+  })
+
+  it('impede anular duas vezes ou reverter uma anulação existente', async () => {
+    await seed('patients/patient-a/evolutions/evolution-2', {
+      date: '2026-07-16',
+      notes: 'Já anulada',
+      authorId: 'professional-a',
+      voided: true,
+      voidedAt: '2026-07-18T00:00:00.000Z',
+      voidedBy: 'professional-a',
+      voidReason: 'Primeira anulação',
+    })
+    const db = firestoreFor('professional-a')
+    const evolutionRef = doc(db, 'patients/patient-a/evolutions/evolution-2')
+
+    await assertFails(updateDoc(evolutionRef, { voidReason: 'Segunda tentativa' }))
+    await assertFails(updateDoc(evolutionRef, { voided: false }))
+  })
+
+  it('impede outro profissional de anular a evolução', async () => {
+    const otherDb = firestoreFor('professional-b')
+    const evolutionRef = doc(otherDb, 'patients/patient-a/evolutions/evolution-1')
+
+    await assertFails(updateDoc(evolutionRef, {
+      voided: true,
+      voidedAt: '2026-07-20T00:00:00.000Z',
+      voidedBy: 'professional-b',
+      voidReason: 'Tentativa indevida',
+    }))
   })
 })
 

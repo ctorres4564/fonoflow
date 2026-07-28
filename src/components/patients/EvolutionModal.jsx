@@ -1,14 +1,17 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import InputField from '../common/InputField'
-import { completeScheduledEvolution, createClinicalEvolution, getEvolutionRevisions, removeEvolution, reviseEvolution, saveEvolutionDraft, saveProgressAnalysis, subscribeEvolutionDrafts, subscribeEvolutions, subscribeProgressAnalyses } from '../../services/patientService'
+import { addEvolutionAmendment, annulEvolution, completeScheduledEvolution, createClinicalEvolution, getEvolutionAmendments, saveEvolutionDraft, saveProgressAnalysis, subscribeEvolutionDrafts, subscribeEvolutions, subscribeProgressAnalyses } from '../../services/patientService'
 import { recordAuditEvent } from '../../services/auditService'
 import { getAnamnesis, saveAnamnesis } from '../../services/anamnesisService'
 import { askGemini } from '../../services/geminiService'
 import { buildSanitizedPrompt, minimizeClinicalText, sanitizeAiPlainText } from '../../utils/aiPrivacy'
+import { EMPTY_RICH_CONTENT, buildEvolutionCreatePayload, isRichContentEmpty, plainTextToRichContent, richContentToPlainText, sanitizeRichContent } from '../../utils/richContent'
 import AIConsentModal from './AIConsentModal'
 import DocumentsTab from './DocumentsTab'
 import TherapeuticPlanTab from './TherapeuticPlanTab'
+import RichTextEditor from './RichTextEditor'
+import RichContentRenderer from './RichContentRenderer'
 import { objectiveStatuses, subscribeTherapeuticPlan } from '../../services/therapeuticPlanService'
 import { useAuth } from '../../contexts/useAuth'
 import { finalizeEvolutionWithQualityReview } from '../../services/evolutionFinalizeService'
@@ -17,6 +20,7 @@ const initialValues = {
   date: new Date().toISOString().split('T')[0],
   duration: 50,
   notes: '',
+  richContent: EMPTY_RICH_CONTENT,
   incrementSession: true,
 }
 
@@ -82,7 +86,8 @@ function AnamnesisSection({ title, description, children, open = false }) {
 }
 
 function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onScheduleCompleted }) {
-  const { userProfile } = useAuth()
+  const { userProfile, user } = useAuth()
+  const authorId = user?.uid || userProfile?.uid || ''
   const [currentIdempotencyKey, setCurrentIdempotencyKey] = useState('')
   const [activeTab, setActiveTab] = useState('evolutions')
 
@@ -91,17 +96,25 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
   const [expandedEvolutionIds, setExpandedEvolutionIds] = useState([])
   const [historyFilters, setHistoryFilters] = useState({ search: '', dateFrom: '', dateTo: '' })
   const [editingEvolution, setEditingEvolution] = useState(null)
-  const [revisionValues, setRevisionValues] = useState({ date: '', duration: 50, notes: '', reason: '' })
 
   useEffect(() => {
     if (!isOpen || !patient?.id) return
     recordAuditEvent({ action: 'record.viewed', patientId: patient.id, resourceId: patient.id })
       .catch((error) => console.error('Falha ao registrar consulta do prontuário:', error))
   }, [isOpen, patient?.id])
-  const [revisionHistory, setRevisionHistory] = useState([])
-  const [loadingRevisions, setLoadingRevisions] = useState(false)
-  const [savingRevision, setSavingRevision] = useState(false)
-  const [isRevisionExpanded, setIsRevisionExpanded] = useState(false)
+  // Retificações (amendments): adições ao histórico que nunca alteram o registro original.
+  const [amendmentHistory, setAmendmentHistory] = useState([])
+  const [loadingAmendments, setLoadingAmendments] = useState(false)
+  const [savingAmendment, setSavingAmendment] = useState(false)
+  const [amendmentRichContent, setAmendmentRichContent] = useState(EMPTY_RICH_CONTENT)
+  const [amendmentKey, setAmendmentKey] = useState(0)
+  const [isAmendmentExpanded, setIsAmendmentExpanded] = useState(false)
+  // Anulação: marca a evolução como anulada mediante justificativa, sem apagar ou reescrever o conteúdo original.
+  const [annulmentTarget, setAnnulmentTarget] = useState(null)
+  const [annulmentReason, setAnnulmentReason] = useState('')
+  const [savingAnnulment, setSavingAnnulment] = useState(false)
+  const [aiSuggestion, setAiSuggestion] = useState('')
+  const notesEditorRef = useRef(null)
   const [loadingList, setLoadingList] = useState(true)
   const [formValues, setFormValues] = useState(initialValues)
   const [loadingSubmit, setLoadingSubmit] = useState(false)
@@ -141,11 +154,8 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
       rec.lang = 'pt-BR'
 
       rec.onresult = (event) => {
-        const text = event.results[event.results.length - 1][0].transcript
-        setFormValues((prev) => ({
-          ...prev,
-          notes: prev.notes ? `${prev.notes.trim()} ${text.trim()}.` : `${text.trim()}.`,
-        }))
+        const text = event.results[event.results.length - 1][0].transcript.trim()
+        if (text) notesEditorRef.current?.insertText(`${text}. `)
       }
 
       rec.onerror = (event) => {
@@ -192,10 +202,12 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
       date: linkedSchedule?.date || new Date().toISOString().split('T')[0],
       duration: endMinutes > startMinutes ? endMinutes - startMinutes : 50,
       notes: '',
+      richContent: EMPTY_RICH_CONTENT,
       incrementSession: true,
     })
     setSuggestedExercises('')
     setAiProgressAnalysis('')
+    setAiSuggestion('')
     setSelectedDraftId('')
     setIsNotesExpanded(false)
     setObjectiveProgress([])
@@ -330,8 +342,9 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
           notes: minimizedNotes,
         })
         const refined = await askGemini(prompt, systemInstruction)
-        setFormValues((prev) => ({ ...prev, notes: sanitizeAiPlainText(refined).trim() }))
-        toast.success('Prontuário refinado com IA!')
+        // A sugestão fica em revisão: só substitui a evolução quando a profissional aplicar.
+        setAiSuggestion(sanitizeAiPlainText(refined).trim())
+        toast.success('Sugestão da IA pronta para revisão.')
       } catch (error) {
         console.error(error)
         toast.error('Erro ao refinar com IA.')
@@ -339,6 +352,17 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
         setRefiningText(false)
       }
     })
+  }
+
+  const handleApplyAiSuggestion = () => {
+    if (!aiSuggestion) return
+    notesEditorRef.current?.setContent(plainTextToRichContent(aiSuggestion))
+    setAiSuggestion('')
+    toast.success('Sugestão aplicada. Revise o texto antes de registrar.')
+  }
+
+  const handleDiscardAiSuggestion = () => {
+    setAiSuggestion('')
   }
 
   const handleGenerateExercises = async () => {
@@ -510,12 +534,13 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
     try {
       setLoadingSubmit(true)
 
-      const evolutionPayload = {
+      const evolutionPayload = buildEvolutionCreatePayload({
         date: formValues.date,
-        duration: Number(formValues.duration) || 50,
-        notes: formValues.notes.trim(),
+        duration: formValues.duration,
+        richContent: formValues.richContent,
+        authorId,
         objectiveProgress,
-      }
+      })
 
       // Roteamento controlado: Se habilitado para o piloto, usa o endpoint seguro
       if (userProfile?.features?.evolutionQualityReview === true) {
@@ -574,7 +599,10 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
       setFormValues((prev) => ({
         ...prev,
         notes: '',
+        richContent: EMPTY_RICH_CONTENT,
       }))
+      notesEditorRef.current?.clear()
+      setAiSuggestion('')
       setSelectedDraftId('')
       setObjectiveProgress([])
     } catch (error) {
@@ -621,25 +649,26 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
     }
   }
 
-  const handleDelete = async (evolution) => {
-    if (evolution.revisionCount > 0) {
-      toast.error('Registros retificados não podem ser excluídos, pois possuem histórico clínico preservado.')
-      return
-    }
-    const confirmed = window.confirm('Deseja realmente remover esta evolução?')
-    if (!confirmed) return
-
-    try {
-      await removeEvolution(patient.id, evolution.id)
-      toast.success('Evolução removida.')
-    } catch (error) {
-      toast.error('Erro ao remover evolução.')
-      console.error(error)
-    }
-  }
-
   const handleExportPatientData = async () => {
     try {
+      const evolutionsExport = await Promise.all(evolutions.map(async (evol) => {
+        const amendments = await getEvolutionAmendments(patient.id, evol.id)
+        return {
+          data: evol.date,
+          duracaoMinutos: evol.duration,
+          notasEvolucao: evol.notes,
+          conteudoEstruturado: evol.richContent || null,
+          anulada: evol.voided === true,
+          motivoAnulacao: evol.voided ? evol.voidReason || '' : null,
+          retificacoes: amendments.map((amendment) => ({
+            conteudo: amendment.plainText || '',
+            conteudoEstruturado: amendment.content || null,
+            autorId: amendment.authorId || '',
+            criadoEm: amendment.createdAt?.toDate ? amendment.createdAt.toDate().toISOString() : null,
+          })),
+        }
+      }))
+
       const dataToExport = {
         paciente: {
           nome: patient.name,
@@ -657,11 +686,7 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
         anamnese: Object.fromEntries(
           Object.entries(anamnesisExportLabels).map(([key, label]) => [label, anamnesisValues[key]])
         ),
-        evolucoes: evolutions.map((evol) => ({
-          data: evol.date,
-          duracaoMinutos: evol.duration,
-          notasEvolucao: evol.notes,
-        })),
+        evolucoes: evolutionsExport,
         exportadoEm: new Date().toISOString(),
       }
 
@@ -714,82 +739,89 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
     window.open(`/imprimir/paciente/${patient.id}?${params.toString()}`, '_blank')
   }
 
-  const openRevisionModal = async (evolution) => {
-    setIsRevisionExpanded(false)
+  const openAmendmentsPanel = async (evolution) => {
+    setIsAmendmentExpanded(false)
     setEditingEvolution(evolution)
-    setRevisionValues({
-      date: evolution.date || '',
-      duration: Number(evolution.duration) || 50,
-      notes: evolution.notes || '',
-      reason: '',
-    })
-    setLoadingRevisions(true)
+    setAmendmentRichContent(EMPTY_RICH_CONTENT)
+    setAmendmentKey((key) => key + 1)
+    setLoadingAmendments(true)
     try {
-      setRevisionHistory(await getEvolutionRevisions(patient.id, evolution.id))
+      setAmendmentHistory(await getEvolutionAmendments(patient.id, evolution.id))
     } catch (error) {
       console.error(error)
       toast.error('Erro ao carregar o histórico de retificações.')
     } finally {
-      setLoadingRevisions(false)
+      setLoadingAmendments(false)
     }
   }
 
-  const persistRevision = async (closeAfterSave = true) => {
-    if (!revisionValues.notes.trim() || !revisionValues.reason.trim()) {
-      toast.error('Informe as anotações e o motivo da retificação.')
+  const persistAmendment = async () => {
+    if (isRichContentEmpty(amendmentRichContent)) {
+      toast.error('Escreva o conteúdo da retificação antes de salvar.')
       return false
     }
 
     try {
-      setSavingRevision(true)
-      await reviseEvolution(
+      setSavingAmendment(true)
+      const sanitized = sanitizeRichContent(amendmentRichContent)
+      await addEvolutionAmendment(
         patient.id,
         editingEvolution.id,
-        { ...revisionValues, notes: revisionValues.notes.trim() },
-        revisionValues.reason.trim(),
+        { content: sanitized, plainText: richContentToPlainText(sanitized) },
+        authorId,
       )
-      toast.success('Evolução retificada com histórico preservado.')
-      if (closeAfterSave) {
-        setEditingEvolution(null)
-        setRevisionHistory([])
-        setIsRevisionExpanded(false)
-      }
+      toast.success('Retificação adicionada. O registro original foi preservado.')
+      setAmendmentHistory(await getEvolutionAmendments(patient.id, editingEvolution.id))
+      setAmendmentRichContent(EMPTY_RICH_CONTENT)
+      setAmendmentKey((key) => key + 1)
       return true
     } catch (error) {
       console.error(error)
-      toast.error('Erro ao retificar a evolução.')
+      toast.error('Erro ao adicionar a retificação.')
       return false
     } finally {
-      setSavingRevision(false)
+      setSavingAmendment(false)
     }
   }
 
-  const handleSaveRevision = async (event) => {
+  const handleSaveAmendment = async (event) => {
     event.preventDefault()
-    await persistRevision(true)
+    await persistAmendment()
   }
 
-  const handleSaveRevisionAndPrint = async () => {
-    const printWindow = window.open('', '_blank')
-    const saved = await persistRevision(false)
-    if (!saved) {
-      printWindow?.close()
-      return
-    }
-    const params = new URLSearchParams({ evolucao: editingEvolution.id })
-    if (printWindow) printWindow.location.href = `/imprimir/paciente/${patient.id}?${params.toString()}`
-    setEditingEvolution(null)
-    setRevisionHistory([])
-    setIsRevisionExpanded(false)
-  }
-
-  const handleCopyRevision = async () => {
+  const handleCopyAmendmentDraft = async () => {
     try {
-      await navigator.clipboard.writeText(revisionValues.notes)
-      toast.success('Evolução copiada.')
+      await navigator.clipboard.writeText(richContentToPlainText(amendmentRichContent))
+      toast.success('Texto copiado.')
     } catch (error) {
       console.error(error)
-      toast.error('Não foi possível copiar a evolução.')
+      toast.error('Não foi possível copiar o texto.')
+    }
+  }
+
+  const openAnnulmentDialog = (evolution) => {
+    setAnnulmentTarget(evolution)
+    setAnnulmentReason('')
+  }
+
+  const handleConfirmAnnulment = async (event) => {
+    event.preventDefault()
+    if (!annulmentReason.trim()) {
+      toast.error('Informe a justificativa para anular a evolução.')
+      return
+    }
+
+    try {
+      setSavingAnnulment(true)
+      await annulEvolution(patient.id, annulmentTarget.id, annulmentReason.trim(), authorId)
+      toast.success('Evolução anulada. O registro permanece no histórico com essa marcação.')
+      setAnnulmentTarget(null)
+      setAnnulmentReason('')
+    } catch (error) {
+      console.error(error)
+      toast.error('Erro ao anular a evolução.')
+    } finally {
+      setSavingAnnulment(false)
     }
   }
 
@@ -962,7 +994,10 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
                       onChange={(event) => {
                         const draft = evolutionDrafts.find((item) => item.id === event.target.value)
                         setSelectedDraftId(event.target.value)
-                        if (draft) setFormValues((values) => ({ ...values, date: draft.date || values.date, duration: draft.duration || values.duration, notes: draft.notes || '' }))
+                        if (draft) {
+                          setFormValues((values) => ({ ...values, date: draft.date || values.date, duration: draft.duration || values.duration }))
+                          notesEditorRef.current?.setContent(draft.richContent || plainTextToRichContent(draft.notes || ''))
+                        }
                       }}
                       className="w-full rounded-xl border border-noble-300 bg-white px-3 py-2 text-sm text-noble-800 dark:border-noble-700 dark:bg-noble-800 dark:text-white"
                     >
@@ -972,24 +1007,32 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
                       ))}
                     </select>
                   )}
-                  <textarea
+                  <RichTextEditor
+                    key={currentIdempotencyKey}
+                    ref={notesEditorRef}
                     id="clinical-notes-field"
-                    name="notes"
-                    value={formValues.notes}
-                    onChange={handleChange}
+                    ariaLabel="Evolução clínica"
+                    initialContent={formValues.richContent}
+                    onChange={(json, text) => setFormValues((prev) => ({ ...prev, richContent: json, notes: text }))}
                     placeholder="Descreva as atividades, progresso e comportamento do paciente durante a sessão..."
-                    rows={isNotesExpanded ? 22 : 5}
-                    className={`w-full resize-y rounded-xl border border-noble-300 !bg-white px-4 py-3 text-sm leading-7 !text-black shadow-inner focus:outline-none focus:ring-2 focus:ring-plum-400 dark:border-noble-600 dark:!bg-noble-900 dark:!text-white ${
-                      isNotesExpanded ? 'min-h-[55vh]' : 'min-h-36 max-h-[60vh]'
-                    }`}
-                    required
+                    minHeightClass={isNotesExpanded ? 'min-h-[55vh]' : 'min-h-36 max-h-[60vh]'}
                   />
+                  {aiSuggestion && (
+                    <div className="rounded-xl border-2 border-plum-300 bg-plum-50/50 p-4 dark:border-plum-700 dark:bg-noble-800">
+                      <p className="mb-2 text-xs font-bold uppercase tracking-wider text-plum-700 dark:text-plum-300">Sugestão da IA — revise antes de aplicar</p>
+                      <p className="whitespace-pre-wrap text-sm leading-6 text-noble-700 dark:text-noble-200">{aiSuggestion}</p>
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <button type="button" onClick={handleDiscardAiSuggestion} className="rounded-lg border border-noble-300 px-3 py-2 text-xs font-bold text-noble-700 hover:bg-noble-50 dark:border-noble-700 dark:text-noble-200 dark:hover:bg-noble-800">Descartar</button>
+                        <button type="button" onClick={handleApplyAiSuggestion} className="rounded-lg bg-plum-600 px-3 py-2 text-xs font-bold text-white hover:bg-plum-700">Aplicar sugestão</button>
+                      </div>
+                    </div>
+                  )}
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                     <button type="button" onClick={handleCopyEvolutionNotes} disabled={!formValues.notes} className="rounded-xl border border-noble-300 px-3 py-2 text-xs font-bold text-noble-700 hover:bg-noble-50 disabled:opacity-50 dark:border-noble-700 dark:text-noble-200 dark:hover:bg-noble-800">Copiar texto</button>
                     <button type="button" onClick={persistEvolutionDraft} disabled={savingDraft || !formValues.notes} className="rounded-xl bg-plum-600 px-3 py-2 text-xs font-bold text-white hover:bg-plum-700 disabled:opacity-50">{savingDraft ? 'Salvando...' : selectedDraftId ? 'Salvar alterações' : 'Salvar rascunho'}</button>
                     <button type="button" onClick={handlePrintEvolutionDraft} disabled={savingDraft || !formValues.notes} className="rounded-xl bg-green-600 px-3 py-2 text-xs font-bold text-white hover:bg-green-700 disabled:opacity-50">Gerar PDF</button>
                   </div>
-                  {!isNotesExpanded && <p className="text-[11px] text-noble-500 dark:text-noble-400">Use “Ampliar” para revisar em tela cheia ou arraste o canto inferior direito.</p>}
+                  {!isNotesExpanded && <p className="text-[11px] text-noble-500 dark:text-noble-400">Use “Ampliar” para revisar em tela cheia.</p>}
                 </div>
 
                 {therapeuticPlan?.objectives?.length > 0 && (
@@ -1187,9 +1230,9 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
                             : 'border-noble-200 hover:border-noble-300 dark:border-noble-800 dark:hover:border-noble-700'
                         }`}
                       >
-                        <div className="absolute right-3 top-3 flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100">
-                          <button type="button" onClick={() => openRevisionModal(evol)} className="text-xs font-semibold text-plum-600 hover:underline dark:text-plum-400">Retificar</button>
-                          {!(evol.revisionCount > 0) && <button type="button" onClick={() => handleDelete(evol)} className="text-xs text-red-500 hover:underline">Excluir</button>}
+                        <div className="absolute right-3 top-3 flex gap-3 opacity-100 md:opacity-0 md:group-hover:opacity-100">
+                          <button type="button" onClick={() => openAmendmentsPanel(evol)} className="text-xs font-semibold text-plum-600 hover:underline dark:text-plum-400">Retificações</button>
+                          {!evol.voided && <button type="button" onClick={() => openAnnulmentDialog(evol)} className="text-xs font-semibold text-red-500 hover:underline">Anular</button>}
                         </div>
                         <label className="mb-2 flex cursor-pointer flex-wrap items-center gap-2 pr-28">
                           <input
@@ -1209,9 +1252,19 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
                           <span className="text-xs font-semibold text-green-700 dark:text-green-400">
                             {evol.scheduleId ? 'Agenda' : 'Manual'}
                           </span>
-                          {evol.revisionCount > 0 && <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400">Retificado {evol.revisionCount}x</span>}
+                          {evol.revisionCount > 0 && <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400">Retificado {evol.revisionCount}x (legado)</span>}
+                          {evol.voided && <span className="rounded bg-red-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-700 dark:bg-red-950/40 dark:text-red-300">Anulada</span>}
                         </label>
-                        <p className={`whitespace-pre-wrap font-sans text-noble-700 dark:text-noble-200 ${expandedEvolutionIds.includes(evol.id) ? 'mt-6 text-base leading-8 md:text-lg md:leading-9' : 'max-h-24 overflow-hidden text-sm leading-relaxed'}`}>{evol.notes}</p>
+                        {evol.voided && (
+                          <p className="mb-2 text-xs font-semibold text-red-600 dark:text-red-400">
+                            Anulada em {evol.voidedAt?.toDate ? evol.voidedAt.toDate().toLocaleDateString('pt-BR') : '—'} — motivo: {evol.voidReason}
+                          </p>
+                        )}
+                        <RichContentRenderer
+                          content={evol.richContent}
+                          plainText={evol.notes}
+                          className={`font-sans text-noble-700 dark:text-noble-200 ${expandedEvolutionIds.includes(evol.id) ? 'mt-6 text-base leading-8 md:text-lg md:leading-9' : 'max-h-24 overflow-hidden text-sm leading-relaxed'} ${evol.voided ? 'opacity-60' : ''}`}
+                        />
                         <button
                           type="button"
                           onClick={() => setExpandedEvolutionIds((ids) => ids.includes(evol.id) ? ids.filter((id) => id !== evol.id) : [...ids, evol.id])}
@@ -1331,60 +1384,89 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
       </div>
       {editingEvolution && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
-          <div className={`max-h-[94vh] w-full overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl dark:bg-noble-900 ${isRevisionExpanded ? 'fixed inset-4 z-[70] md:inset-10' : 'max-w-2xl'}`}>
+          <div className={`max-h-[94vh] w-full overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl dark:bg-noble-900 ${isAmendmentExpanded ? 'fixed inset-4 z-[70] md:inset-10' : 'max-w-2xl'}`}>
             <div className="mb-4 flex items-center justify-between border-b border-noble-200 pb-3 dark:border-noble-800">
               <div>
-                <h4 className="text-lg font-bold text-noble-800 dark:text-white">Retificar evolução</h4>
-                <p className="text-xs text-noble-500 dark:text-noble-400">A versão atual será preservada no histórico.</p>
+                <h4 className="text-lg font-bold text-noble-800 dark:text-white">Retificações da evolução</h4>
+                <p className="text-xs text-noble-500 dark:text-noble-400">O registro original é preservado. Retificações são anotações adicionais e nunca substituem o conteúdo original.</p>
               </div>
               <div className="flex gap-2">
-                <button type="button" onClick={() => setIsRevisionExpanded((expanded) => !expanded)} className="rounded-lg border border-noble-300 px-3 py-1.5 text-xs font-bold text-noble-700 hover:bg-noble-50 dark:border-noble-700 dark:text-noble-200 dark:hover:bg-noble-800">{isRevisionExpanded ? 'Reduzir' : 'Ampliar'}</button>
-                <button type="button" onClick={() => { setEditingEvolution(null); setIsRevisionExpanded(false) }} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/20">Fechar</button>
+                <button type="button" onClick={() => setIsAmendmentExpanded((expanded) => !expanded)} className="rounded-lg border border-noble-300 px-3 py-1.5 text-xs font-bold text-noble-700 hover:bg-noble-50 dark:border-noble-700 dark:text-noble-200 dark:hover:bg-noble-800">{isAmendmentExpanded ? 'Reduzir' : 'Ampliar'}</button>
+                <button type="button" onClick={() => { setEditingEvolution(null); setIsAmendmentExpanded(false) }} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/20">Fechar</button>
               </div>
             </div>
-            <form onSubmit={handleSaveRevision} className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <InputField label="Data da sessão" type="date" value={revisionValues.date} onChange={(event) => setRevisionValues((values) => ({ ...values, date: event.target.value }))} required />
-                <InputField label="Duração (minutos)" type="number" min={1} value={revisionValues.duration} onChange={(event) => setRevisionValues((values) => ({ ...values, duration: event.target.value }))} required />
-              </div>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-bold text-noble-800 dark:text-white">Anotações clínicas corrigidas *</span>
-                <textarea
-                  value={revisionValues.notes}
-                  onChange={(event) => setRevisionValues((values) => ({ ...values, notes: event.target.value }))}
-                  rows={isRevisionExpanded ? 22 : 14}
-                  className={`w-full resize-y rounded-xl border border-noble-300 !bg-white p-4 text-sm leading-7 !text-black shadow-inner focus:outline-none focus:ring-2 focus:ring-plum-400 dark:border-noble-600 dark:!bg-noble-900 dark:!text-white ${isRevisionExpanded ? 'min-h-[55vh]' : 'min-h-80'}`}
-                  required
-                />
-              </label>
-              <InputField label="Motivo da retificação" type="textarea" rows={2} value={revisionValues.reason} onChange={(event) => setRevisionValues((values) => ({ ...values, reason: event.target.value }))} placeholder="Explique por que o registro está sendo corrigido." required />
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                <button type="button" onClick={handleCopyRevision} className="rounded-xl border border-noble-300 px-4 py-3 text-sm font-bold text-noble-700 hover:bg-noble-50 dark:border-noble-700 dark:text-noble-200 dark:hover:bg-noble-800">Copiar texto</button>
-                <button type="submit" disabled={savingRevision} className="rounded-xl bg-plum-600 px-4 py-3 text-sm font-bold text-white hover:bg-plum-700 disabled:opacity-50">{savingRevision ? 'Salvando...' : 'Salvar retificação'}</button>
-                <button type="button" onClick={handleSaveRevisionAndPrint} disabled={savingRevision} className="rounded-xl bg-green-600 px-4 py-3 text-sm font-bold text-white hover:bg-green-700 disabled:opacity-50">Salvar e gerar PDF</button>
-              </div>
-            </form>
 
-            <div className="mt-6 border-t border-noble-200 pt-4 dark:border-noble-800">
-              <h5 className="text-sm font-bold text-noble-800 dark:text-white">Versões anteriores</h5>
-              {loadingRevisions ? (
-                <p className="mt-3 text-xs text-noble-500">Carregando histórico...</p>
-              ) : revisionHistory.length === 0 ? (
-                <p className="mt-3 text-xs text-noble-500">Este registro ainda não possui retificações anteriores.</p>
+            <div className="mb-4 rounded-xl border border-noble-200 bg-noble-50 p-4 dark:border-noble-800 dark:bg-noble-900">
+              <p className="mb-2 text-xs font-bold uppercase tracking-wider text-noble-500 dark:text-noble-400">Registro original (imutável)</p>
+              {editingEvolution.voided && (
+                <p className="mb-2 text-xs font-semibold text-red-600 dark:text-red-400">
+                  Anulada em {editingEvolution.voidedAt?.toDate ? editingEvolution.voidedAt.toDate().toLocaleDateString('pt-BR') : '—'} — motivo: {editingEvolution.voidReason}
+                </p>
+              )}
+              <RichContentRenderer content={editingEvolution.richContent} plainText={editingEvolution.notes} className="text-sm leading-6 text-noble-700 dark:text-noble-200" />
+            </div>
+
+            <div className="mb-6">
+              <h5 className="mb-2 text-sm font-bold text-noble-800 dark:text-white">Histórico de retificações</h5>
+              {loadingAmendments ? (
+                <p className="text-xs text-noble-500">Carregando histórico...</p>
+              ) : amendmentHistory.length === 0 ? (
+                <p className="text-xs text-noble-500">Este registro ainda não possui retificações.</p>
               ) : (
-                <div className="mt-3 space-y-3">
-                  {revisionHistory.map((revision) => (
-                    <details key={revision.id} className="rounded-xl border border-noble-200 p-3 dark:border-noble-700">
-                      <summary className="cursor-pointer text-xs font-bold text-noble-700 dark:text-noble-200">
-                        Versão de {revision.date?.split('-').reverse().join('/')} — motivo: {revision.reason}
-                      </summary>
-                      <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-noble-600 dark:text-noble-300">{revision.notes}</p>
-                      <p className="mt-2 text-[10px] text-noble-400">Duração registrada: {revision.duration} minutos</p>
-                    </details>
+                <div className="space-y-3">
+                  {amendmentHistory.map((amendment) => (
+                    <div key={amendment.id} className="rounded-xl border border-noble-200 p-3 dark:border-noble-700">
+                      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-noble-500 dark:text-noble-400">
+                        {amendment.createdAt?.toDate ? amendment.createdAt.toDate().toLocaleString('pt-BR') : 'Data não disponível'}
+                      </p>
+                      <RichContentRenderer content={amendment.content} plainText={amendment.plainText} className="text-xs leading-relaxed text-noble-700 dark:text-noble-200" />
+                    </div>
                   ))}
                 </div>
               )}
             </div>
+
+            <form onSubmit={handleSaveAmendment} className="space-y-3 border-t border-noble-200 pt-4 dark:border-noble-800">
+              <span className="text-sm font-bold text-noble-800 dark:text-white">Adicionar retificação</span>
+              <RichTextEditor
+                key={amendmentKey}
+                ariaLabel="Texto da retificação"
+                initialContent={EMPTY_RICH_CONTENT}
+                onChange={(json) => setAmendmentRichContent(json)}
+                placeholder="Explique a correção ou complemento necessário..."
+                minHeightClass={isAmendmentExpanded ? 'min-h-[35vh]' : 'min-h-32'}
+              />
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <button type="button" onClick={handleCopyAmendmentDraft} className="rounded-xl border border-noble-300 px-4 py-3 text-sm font-bold text-noble-700 hover:bg-noble-50 dark:border-noble-700 dark:text-noble-200 dark:hover:bg-noble-800">Copiar texto</button>
+                <button type="submit" disabled={savingAmendment} className="rounded-xl bg-plum-600 px-4 py-3 text-sm font-bold text-white hover:bg-plum-700 disabled:opacity-50">{savingAmendment ? 'Salvando...' : 'Salvar retificação'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {annulmentTarget && (
+        <div className="fixed inset-0 z-[65] flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-noble-900">
+            <h4 className="text-lg font-bold text-noble-800 dark:text-white">Anular evolução</h4>
+            <p className="mt-1 text-xs text-noble-500 dark:text-noble-400">
+              A evolução permanecerá no histórico, claramente marcada como anulada. O conteúdo original não será alterado.
+            </p>
+            <form onSubmit={handleConfirmAnnulment} className="mt-4 space-y-3">
+              <InputField
+                label="Justificativa da anulação *"
+                type="textarea"
+                rows={4}
+                value={annulmentReason}
+                onChange={(event) => setAnnulmentReason(event.target.value)}
+                placeholder="Explique o motivo da anulação deste registro."
+                required
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => setAnnulmentTarget(null)} className="rounded-xl border border-noble-300 px-4 py-3 text-sm font-bold text-noble-700 hover:bg-noble-50 dark:border-noble-700 dark:text-noble-200 dark:hover:bg-noble-800">Cancelar</button>
+                <button type="submit" disabled={savingAnnulment} className="rounded-xl bg-red-600 px-4 py-3 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50">{savingAnnulment ? 'Anulando...' : 'Confirmar anulação'}</button>
+              </div>
+            </form>
           </div>
         </div>
       )}
