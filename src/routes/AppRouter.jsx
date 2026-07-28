@@ -13,6 +13,7 @@ const RegisterPage = lazy(() => import('../pages/RegisterPage'))
 const AgendaPage = lazy(() => import('../pages/AgendaPage'))
 const ReportPrintPage = lazy(() => import('../pages/ReportPrintPage'))
 const GuidePage = lazy(() => import('../pages/GuidePage'))
+const AuditPage = lazy(() => import('../pages/AuditPage'))
 
 function AppRouter() {
   return (
@@ -65,6 +66,7 @@ function AppRouter() {
         <Route path="pacientes" element={<PatientsPage />} />
         <Route path="agenda" element={<AgendaPage />} />
         <Route path="guia" element={<GuidePage />} />
+        <Route path="auditoria" element={<AuditPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

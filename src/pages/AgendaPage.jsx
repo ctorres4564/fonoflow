@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import ScheduleModal from '../components/patients/ScheduleModal'
-import { removeSchedule } from '../services/scheduleService'
+import EvolutionModal from '../components/patients/EvolutionModal'
+import ScheduleStatusModal from '../components/patients/ScheduleStatusModal'
 import { useAuth } from '../contexts/useAuth'
 import { getWhatsAppReminderLink } from '../utils/whatsappHelper'
 
@@ -13,6 +14,18 @@ const MONTHS = [
 ]
 const WEEKDAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 
+const ACTIVE_STATUSES = new Set(['Agendado', 'Confirmado'])
+const STATUS_OPTIONS = ['Todos', 'Agendado', 'Confirmado', 'Realizado', 'Falta', 'Cancelado pelo paciente', 'Cancelado pela profissional', 'Reagendado']
+const statusStyles = {
+  Agendado: 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300',
+  Confirmado: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
+  Realizado: 'bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-300',
+  Falta: 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300',
+  'Cancelado pelo paciente': 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300',
+  'Cancelado pela profissional': 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300',
+  Reagendado: 'bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300',
+}
+
 function AgendaPage() {
   const { user } = useAuth()
   const { patients = [], schedules = [], loadingSchedules } = useOutletContext()
@@ -21,7 +34,10 @@ function AgendaPage() {
   const [selectedDateStr, setSelectedDateStr] = useState(new Date().toISOString().split('T')[0])
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [selectedSchedule, setSelectedSchedule] = useState(null)
+  const [scheduleToComplete, setScheduleToComplete] = useState(null)
+  const [scheduleToChangeStatus, setScheduleToChangeStatus] = useState(null)
   const [generalSearch, setGeneralSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('Todos')
 
   const currentYear = currentDate.getFullYear()
   const currentMonth = currentDate.getMonth()
@@ -74,14 +90,16 @@ function AgendaPage() {
     // Filtrar por busca e ordenar cronologicamente decrescente (mais recentes primeiro)
     return schedules
       .filter((sch) => {
-        return sch.patientName?.toLowerCase().includes(term) || sch.sessionType?.toLowerCase().includes(term)
+        const matchesSearch = sch.patientName?.toLowerCase().includes(term) || sch.sessionType?.toLowerCase().includes(term)
+        const matchesStatus = statusFilter === 'Todos' || (sch.status || 'Agendado') === statusFilter
+        return matchesSearch && matchesStatus
       })
       .sort((a, b) => {
         const dateTimeA = `${a.date || ''}T${a.startTime || ''}`
         const dateTimeB = `${b.date || ''}T${b.startTime || ''}`
         return dateTimeB.localeCompare(dateTimeA) // Recentes primeiro
       })
-  }, [schedules, generalSearch])
+  }, [schedules, generalSearch, statusFilter])
 
   // Navegar entre meses
   const prevMonth = () => {
@@ -110,17 +128,19 @@ function AgendaPage() {
     setSelectedSchedule(null)
   }
 
-  const handleDeleteSchedule = async (sch) => {
-    const confirmed = window.confirm(`Deseja realmente desmarcar a sessão de ${sch.patientName}?`)
-    if (!confirmed) return
-
-    try {
-      await removeSchedule(sch.id)
-      toast.success('Sessão desmarcada com sucesso.')
-    } catch (error) {
-      toast.error('Erro ao desmarcar sessão.')
-      console.error(error)
+  const openEvolutionFromSchedule = (schedule) => {
+    const patient = patients.find((item) => item.id === schedule.patientId)
+    if (!patient) {
+      toast.error('Paciente deste agendamento não foi encontrado.')
+      return
     }
+
+    if (schedule.status === 'Realizado' || schedule.evolutionId) {
+      toast.error('Este atendimento já foi registrado.')
+      return
+    }
+
+    setScheduleToComplete({ schedule, patient })
   }
 
   // Formatar data selecionada para exibição
@@ -252,6 +272,7 @@ function AgendaPage() {
               {selectedDaySchedules.map((sch) => {
                 const patientPhone = patients.find((p) => p.id === sch.patientId)?.phone || ''
                 const waLink = getWhatsAppReminderLink(patientPhone, sch.patientName, sch.date, sch.startTime)
+                const currentStatus = sch.status || 'Agendado'
 
                 const badgeColor = {
                   Terapia: 'bg-plum-100 dark:bg-plum-950/40 text-plum-700 dark:text-plum-300',
@@ -266,7 +287,7 @@ function AgendaPage() {
                   >
                     {/* Botões de Ação na Linha */}
                     <div className="absolute right-3 top-3 flex gap-3 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition">
-                      {patientPhone && (
+                      {patientPhone && ACTIVE_STATUSES.has(currentStatus) && (
                         <a
                           href={waLink}
                           target="_blank"
@@ -283,13 +304,7 @@ function AgendaPage() {
                       >
                         Editar
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteSchedule(sch)}
-                        className="text-xs text-red-500 hover:underline font-semibold"
-                      >
-                        Desmarcar
-                      </button>
+                      {!['Realizado', 'Reagendado'].includes(currentStatus) && <button type="button" onClick={() => setScheduleToChangeStatus(sch)} className="text-xs font-semibold text-amber-600 hover:underline dark:text-amber-400">Status</button>}
                     </div>
 
                     <p className="font-semibold text-noble-800 dark:text-noble-100">{sch.patientName}</p>
@@ -301,13 +316,29 @@ function AgendaPage() {
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded ${badgeColor}`}>
                         {sch.sessionType}
                       </span>
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded ${statusStyles[currentStatus] || statusStyles.Agendado}`}>
+                        {currentStatus}
+                      </span>
+                      {sch.sessionDeducted && <span className="rounded bg-gold-100 px-2 py-0.5 text-xs font-semibold text-gold-600">Sessão descontada</span>}
                     </div>
+
+                    {ACTIVE_STATUSES.has(currentStatus) && !sch.evolutionId && (
+                      <button
+                        type="button"
+                        onClick={() => openEvolutionFromSchedule(sch)}
+                        className="mt-3 w-full rounded-lg bg-green-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-green-700"
+                      >
+                        Realizar atendimento e registrar evolução
+                      </button>
+                    )}
 
                     {sch.notes && (
                       <p className="mt-2 text-xs text-noble-500 dark:text-noble-400 bg-noble-50 dark:bg-noble-900/40 p-2 rounded italic">
                         {sch.notes}
                       </p>
                     )}
+                    {sch.statusReason && <p className="mt-2 text-xs text-amber-700 dark:text-amber-300"><strong>Motivo:</strong> {sch.statusReason}</p>}
+                    {sch.statusUpdatedAt?.toDate && <p className="mt-1 text-[10px] text-noble-400">Status alterado em {sch.statusUpdatedAt.toDate().toLocaleString('pt-BR')}</p>}
                   </div>
                 )
               })}
@@ -321,16 +352,19 @@ function AgendaPage() {
         <div className="border-b border-noble-200 dark:border-noble-800 pb-3 mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h3 className="text-base font-bold text-noble-800 dark:text-noble-100">Lista Geral de Agendamentos</h3>
-            <p className="text-xs text-noble-500 dark:text-noble-400 mt-1">Consulte, edite ou desmarque qualquer consulta registrada no sistema.</p>
+            <p className="text-xs text-noble-500 dark:text-noble-400 mt-1">Consulte o histórico e atualize o status sem excluir atendimentos.</p>
           </div>
-          <div className="w-full sm:w-72">
+          <div className="grid w-full gap-2 sm:w-auto sm:grid-cols-2">
             <input
               type="text"
               placeholder="Buscar por paciente ou tipo..."
               value={generalSearch}
               onChange={(e) => setGeneralSearch(e.target.value)}
-              className="w-full rounded-xl border border-noble-200 dark:border-noble-700 bg-white dark:bg-noble-850 text-noble-800 dark:text-noble-100 px-4 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-plum-300 transition-colors"
+              className="w-full rounded-xl border border-noble-300 !bg-white px-4 py-2 text-xs !text-black placeholder:!text-noble-500 focus:outline-none focus:ring-2 focus:ring-plum-300 dark:border-noble-700 dark:!bg-noble-800 dark:!text-white dark:placeholder:!text-noble-300 transition-colors"
             />
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="w-full rounded-xl border border-noble-200 bg-white px-4 py-2 text-xs text-noble-800 focus:outline-none focus:ring-2 focus:ring-plum-300 dark:border-noble-700 dark:bg-noble-800 dark:text-white">
+              {STATUS_OPTIONS.map((status) => <option key={status} value={status}>{status}</option>)}
+            </select>
           </div>
         </div>
 
@@ -348,6 +382,7 @@ function AgendaPage() {
                   <th className="px-4 py-3 font-bold text-noble-700 dark:text-noble-300">Paciente</th>
                   <th className="px-4 py-3 font-bold text-noble-700 dark:text-noble-300">Data e Hora</th>
                   <th className="px-4 py-3 font-bold text-noble-700 dark:text-noble-300">Tipo</th>
+                  <th className="px-4 py-3 font-bold text-noble-700 dark:text-noble-300">Status</th>
                   <th className="px-4 py-3 font-bold text-noble-700 dark:text-noble-300">Observações</th>
                   <th className="px-4 py-3 text-right font-bold text-noble-700 dark:text-noble-300">Ações</th>
                 </tr>
@@ -356,6 +391,7 @@ function AgendaPage() {
                 {filteredGeneralSchedules.map((sch) => {
                   const patientPhone = patients.find((p) => p.id === sch.patientId)?.phone || ''
                   const waLink = getWhatsAppReminderLink(patientPhone, sch.patientName, sch.date, sch.startTime)
+                  const currentStatus = sch.status || 'Agendado'
                   const [year, month, day] = sch.date.split('-')
                   const formattedDate = `${day}/${month}/${year}`
 
@@ -376,10 +412,26 @@ function AgendaPage() {
                           {sch.sessionType}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-noble-500 dark:text-noble-400 italic max-w-xs truncate">{sch.notes || '-'}</td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${statusStyles[currentStatus] || statusStyles.Agendado}`}>
+                          {currentStatus}
+                        </span>
+                        {sch.sessionDeducted && <span className="mt-1 block text-[9px] font-bold text-gold-600">Sessão descontada</span>}
+                        {sch.statusUpdatedAt?.toDate && <span className="mt-1 block text-[9px] text-noble-400">{sch.statusUpdatedAt.toDate().toLocaleString('pt-BR')}</span>}
+                      </td>
+                      <td className="max-w-xs px-4 py-3 text-noble-500 dark:text-noble-400"><span className="block truncate italic">{sch.notes || '-'}</span>{sch.statusReason && <span className="mt-1 block truncate text-amber-600 dark:text-amber-300">Motivo: {sch.statusReason}</span>}</td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex justify-end gap-3">
-                          {patientPhone && (
+                          {ACTIVE_STATUSES.has(currentStatus) && !sch.evolutionId && (
+                            <button
+                              type="button"
+                              onClick={() => openEvolutionFromSchedule(sch)}
+                              className="text-[11px] font-bold text-green-600 hover:underline dark:text-green-400"
+                            >
+                              Realizar
+                            </button>
+                          )}
+                          {patientPhone && ACTIVE_STATUSES.has(currentStatus) && (
                             <a
                               href={waLink}
                               target="_blank"
@@ -396,13 +448,7 @@ function AgendaPage() {
                           >
                             Editar
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteSchedule(sch)}
-                            className="text-[11px] text-red-500 hover:underline font-bold"
-                          >
-                            Desmarcar
-                          </button>
+                          {!['Realizado', 'Reagendado'].includes(currentStatus) && <button type="button" onClick={() => setScheduleToChangeStatus(sch)} className="text-[11px] font-bold text-amber-600 hover:underline dark:text-amber-400">Status</button>}
                         </div>
                       </td>
                     </tr>
@@ -420,6 +466,18 @@ function AgendaPage() {
         patients={patients}
         schedule={selectedSchedule}
         userId={user?.uid}
+      />
+      <EvolutionModal
+        isOpen={!!scheduleToComplete}
+        onClose={() => setScheduleToComplete(null)}
+        patient={scheduleToComplete?.patient}
+        linkedSchedule={scheduleToComplete?.schedule}
+        onScheduleCompleted={() => setScheduleToComplete(null)}
+      />
+      <ScheduleStatusModal
+        isOpen={!!scheduleToChangeStatus}
+        onClose={() => setScheduleToChangeStatus(null)}
+        schedule={scheduleToChangeStatus}
       />
     </div>
   )

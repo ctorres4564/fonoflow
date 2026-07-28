@@ -73,6 +73,7 @@ function ScheduleModal({ isOpen, onClose, patients = [], schedule, userId }) {
       endTime: values.endTime,
       sessionType: values.sessionType,
       notes: values.notes.trim(),
+      status: schedule?.status || 'Agendado',
       userId,
     }
 

@@ -31,6 +31,10 @@ function DashboardPage() {
     const currentMonth = String(today.getMonth() + 1).padStart(2, '0')
     const currentDay = String(today.getDate()).padStart(2, '0')
     const todayMMDD = `${currentMonth}-${currentDay}`
+    const todayISO = today.toISOString().slice(0, 10)
+    const reviewLimit = new Date(today)
+    reviewLimit.setDate(reviewLimit.getDate() + 7)
+    const reviewLimitISO = reviewLimit.toISOString().slice(0, 10)
 
     patients.forEach((patient) => {
       // 1. Alerta de Aniversariante
@@ -49,13 +53,30 @@ function DashboardPage() {
       }
 
       // 2. Alerta de limite de sessões
-      const completed = Number(patient.sessionsCompleted || 0)
+      const completed = Number(patient.completedSessions || 0)
       const total = Number(patient.totalSessions || 0)
       if (patient.status === 'Ativo' && total > 0 && completed >= total) {
         list.push({
           id: `limit-${patient.id}`,
           type: 'sessions_limit',
           message: `⚠️ ${patient.name} atingiu o limite estimado de sessões (${completed}/${total}). Avalie a necessidade de renovação do atendimento domiciliar.`,
+        })
+      }
+
+      if (patient.status === 'Ativo' && !Number(patient.therapeuticObjectivesCount || 0)) {
+        list.push({
+          id: `plan-${patient.id}`,
+          type: 'therapeutic_plan',
+          message: `📋 ${patient.name} está sem plano terapêutico com objetivos cadastrados.`,
+        })
+      }
+
+      if (patient.status === 'Ativo' && patient.therapeuticReviewDate && patient.therapeuticReviewDate <= reviewLimitISO) {
+        const overdue = patient.therapeuticReviewDate < todayISO
+        list.push({
+          id: `review-${patient.id}`,
+          type: 'therapeutic_review',
+          message: `${overdue ? '⚠️' : '📅'} A reavaliação do plano de ${patient.name} ${overdue ? 'está atrasada' : 'vence nos próximos 7 dias'}.`,
         })
       }
     })
@@ -122,6 +143,34 @@ function DashboardPage() {
   }, [schedules])
 
   const isLoading = loadingPatients || loadingSchedules
+
+  const attendanceStats = useMemo(() => {
+    const completed = schedules.filter((schedule) => schedule.status === 'Realizado').length
+    const absences = schedules.filter((schedule) => schedule.status === 'Falta').length
+    const cancellations = schedules.filter((schedule) => ['Cancelado pelo paciente', 'Cancelado pela profissional'].includes(schedule.status)).length
+    const concluded = completed + absences
+    return {
+      completed,
+      absences,
+      cancellations,
+      attendanceRate: concluded > 0 ? Math.round((completed / concluded) * 100) : 0,
+    }
+  }, [schedules])
+
+  const therapeuticStats = useMemo(() => {
+    const activePatients = patients.filter((patient) => patient.status === 'Ativo')
+    const today = new Date().toISOString().slice(0, 10)
+    const reviewLimit = new Date()
+    reviewLimit.setDate(reviewLimit.getDate() + 7)
+    const reviewLimitISO = reviewLimit.toISOString().slice(0, 10)
+
+    return {
+      objectives: activePatients.reduce((total, patient) => total + Number(patient.therapeuticObjectivesCount || 0), 0),
+      achieved: activePatients.reduce((total, patient) => total + Number(patient.therapeuticAchievedCount || 0), 0),
+      reviews: activePatients.filter((patient) => patient.therapeuticReviewDate && patient.therapeuticReviewDate >= today && patient.therapeuticReviewDate <= reviewLimitISO).length,
+      withoutPlan: activePatients.filter((patient) => !Number(patient.therapeuticObjectivesCount || 0)).length,
+    }
+  }, [patients])
 
   return (
     <div className="space-y-6">
@@ -238,6 +287,30 @@ function DashboardPage() {
           </>
         )}
       </div>
+
+      {!isLoading && schedules.length > 0 && (
+        <div>
+          <h3 className="mb-3 text-sm font-bold uppercase tracking-wider text-noble-600 dark:text-noble-300">Indicadores de comparecimento</h3>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard title="Atendimentos realizados" value={attendanceStats.completed} accent="emerald" />
+            <StatCard title="Faltas" value={attendanceStats.absences} accent="gold" />
+            <StatCard title="Cancelamentos" value={attendanceStats.cancellations} accent="noble" />
+            <StatCard title="Taxa de presença" value={`${attendanceStats.attendanceRate}%`} helper="Realizados entre atendimentos concluídos e faltas" accent="plum" />
+          </div>
+        </div>
+      )}
+
+      {!isLoading && stats.activePatients > 0 && (
+        <div>
+          <h3 className="mb-3 text-sm font-bold uppercase tracking-wider text-noble-600 dark:text-noble-300">Acompanhamento terapêutico</h3>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard title="Objetivos cadastrados" value={therapeuticStats.objectives} accent="plum" />
+            <StatCard title="Objetivos atingidos" value={therapeuticStats.achieved} accent="emerald" />
+            <StatCard title="Reavaliações em 7 dias" value={therapeuticStats.reviews} accent="gold" />
+            <StatCard title="Pacientes sem plano" value={therapeuticStats.withoutPlan} accent="noble" />
+          </div>
+        </div>
+      )}
 
       {/* Seção de Gráficos e Distribuição */}
       {!isLoading && stats.totalPatients > 0 && (

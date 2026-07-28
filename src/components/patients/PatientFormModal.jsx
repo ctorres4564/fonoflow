@@ -10,6 +10,9 @@ const initialValues = {
   phone: '',
   birthDate: '',
   guardian: '',
+  diagnosis: '',
+  professionalName: '',
+  crfa: '',
   complaint: '',
   notes: '',
   sessionsPerWeek: 1,
@@ -71,6 +74,9 @@ function PatientFormModal({ isOpen, onClose, onSubmit, loading, patient }) {
         phone: patient.phone ?? '',
         birthDate: patient.birthDate ?? '',
         guardian: patient.guardian ?? '',
+        diagnosis: patient.diagnosis ?? '',
+        professionalName: patient.professionalName ?? '',
+        crfa: patient.crfa ?? '',
         complaint: patient.complaint ?? '',
         notes: patient.notes ?? '',
         sessionsPerWeek: patient.sessionsPerWeek ?? 1,
@@ -171,6 +177,11 @@ function PatientFormModal({ isOpen, onClose, onSubmit, loading, patient }) {
           <div className="md:col-span-2">
             <InputField label="Endereço" name="address" value={values.address} onChange={handleChange} error={errors.address} required />
           </div>
+          <div className="md:col-span-2">
+            <InputField label="Diagnóstico" type="textarea" rows={3} name="diagnosis" value={values.diagnosis} onChange={handleChange} placeholder="Informe o diagnóstico clínico do paciente." />
+          </div>
+          <InputField label="Profissional responsável" name="professionalName" value={values.professionalName} onChange={handleChange} error={errors.professionalName} placeholder="Nome completo da fonoaudióloga" required />
+          <InputField label="CRFa" name="crfa" value={values.crfa} onChange={handleChange} error={errors.crfa} placeholder="Ex.: CRFa 1-12345" required />
           <InputField label="Sessões por semana" type="number" min={1} name="sessionsPerWeek" value={values.sessionsPerWeek} onChange={handleChange} error={errors.sessionsPerWeek} required />
           <InputField label="Total contratado" type="number" min={1} name="totalSessions" value={values.totalSessions} onChange={handleChange} error={errors.totalSessions} required />
           <InputField label="Sessões realizadas" type="number" min={0} name="completedSessions" value={values.completedSessions} onChange={handleChange} error={errors.completedSessions} required />

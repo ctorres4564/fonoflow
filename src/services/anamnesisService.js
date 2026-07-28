@@ -1,5 +1,6 @@
 import { doc, getDoc, setDoc } from 'firebase/firestore'
 import { db } from '../firebase/config'
+import { recordAuditEvent } from './auditService'
 
 /**
  * Busca a anamnese cadastrada para um paciente.
@@ -29,4 +30,5 @@ export async function saveAnamnesis(patientId, data) {
     ...data,
     updatedAt: new Date().toISOString(),
   }, { merge: true })
+  await recordAuditEvent({ action: 'anamnesis.updated', patientId, resourceId: 'data', changedFields: Object.keys(data) })
 }

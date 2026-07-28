@@ -29,6 +29,8 @@ export function validatePatientForm(values) {
   }
   if (!values.birthDate) errors.birthDate = 'Data de nascimento é obrigatória.'
   if (!values.guardian?.trim()) errors.guardian = 'Nome do responsável é obrigatório.'
+  if (!values.professionalName?.trim()) errors.professionalName = 'Nome da profissional é obrigatório.'
+  if (!values.crfa?.trim()) errors.crfa = 'CRFa é obrigatório.'
 
   const sessionsPerWeek = Number(values.sessionsPerWeek)
   const totalSessions = Number(values.totalSessions)
