@@ -1,4 +1,6 @@
-# Sistema de Gerenciamento de Pacientes de Fonoaudiologia (MVP - Fase 1)
+# FonoSuite Space — Gestão clínica para fonoaudiologia (MVP - Fase 1)
+
+O **FonoSuite Space** é uma plataforma especializada em gestão clínica de pacientes de fonoaudiologia, pertencente ao ecossistema **FonoSuite**. Esta é apenas uma mudança de marca e apresentação: repositório, projeto Firebase, banco de dados, regras de segurança e URL técnica permanecem exatamente os mesmos.
 
 Aplicação web construída com **React + Vite + Tailwind CSS + Firebase** para gestão clínica de pacientes de fonoaudiologia.
 

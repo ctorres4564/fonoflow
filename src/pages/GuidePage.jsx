@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { branding } from '../config/branding'
 
 function GuidePage() {
   const [activeSection, setActiveSection] = useState('intro')
@@ -6,11 +7,11 @@ function GuidePage() {
   const sections = [
     {
       id: 'intro',
-      title: '1. Introdução ao FonoFlow 🚀',
+      title: `1. Introdução ao ${branding.productName} 🚀`,
       content: (
         <div className="space-y-4">
           <p className="text-sm text-noble-700 dark:text-noble-300 leading-relaxed">
-            O <strong>FonoFlow</strong> é uma plataforma moderna desenvolvida especificamente para fonoaudiólogos, focada na gestão prática de atendimentos domiciliares (home care). O sistema centraliza dados de pacientes, histórico de prontuários, agendamentos semanais e conta com uma inteligência artificial assistente.
+            O <strong>{branding.productName}</strong> é uma plataforma moderna do ecossistema {branding.suiteName}, desenvolvida especificamente para fonoaudiólogos, focada na gestão prática de atendimentos domiciliares (home care). O sistema centraliza dados de pacientes, histórico de prontuários, agendamentos semanais e conta com uma inteligência artificial assistente.
           </p>
           <div className="rounded-xl bg-plum-50/50 dark:bg-plum-950/20 p-4 border border-plum-100 dark:border-plum-900/60">
             <h4 className="text-xs font-bold text-plum-800 dark:text-plum-300 uppercase tracking-wider mb-2">Principais Diferenciais</h4>
@@ -142,7 +143,7 @@ function GuidePage() {
               Clique em <code>Imprimir Prontuário 🖨️</code> no cabeçalho do Prontuário do paciente.
             </li>
             <li>
-              O FonoFlow abrirá uma página limpa formatada para folha A4 contendo os dados cadastrais, a anamnese completa, o histórico detalhado de sessões ordenadas e o rodapé contendo o espaço para assinatura e carimbo do fonoaudiólogo.
+              O {branding.productName} abrirá uma página limpa formatada para folha A4 contendo os dados cadastrais, a anamnese completa, o histórico detalhado de sessões ordenadas e o rodapé contendo o espaço para assinatura e carimbo do fonoaudiólogo.
             </li>
             <li>
               Para salvar em arquivo digital, utilize a funcionalidade de impressão do próprio navegador (teclas <code>Ctrl + P</code>) e escolha a opção **"Salvar como PDF"**.

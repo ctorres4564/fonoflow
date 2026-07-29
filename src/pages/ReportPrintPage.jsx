@@ -5,6 +5,7 @@ import { db } from '../firebase/config'
 import { getAnamnesis } from '../services/anamnesisService'
 import { getEvolutionAmendments } from '../services/patientService'
 import RichContentRenderer from '../components/patients/RichContentRenderer'
+import { branding } from '../config/branding'
 
 const anamnesisPrintFields = [
   ['interviewDate', 'Data da entrevista'], ['informant', 'Informante'],
@@ -241,8 +242,8 @@ function ReportPrintPage() {
       <article className="mx-auto max-w-3xl bg-white p-10 shadow-lg print:shadow-none print:p-0 font-serif text-neutral-900 leading-relaxed">
         {/* Cabeçalho Timbrado */}
         <div className="border-b-2 border-neutral-300 pb-5 text-center">
-          <h1 className="text-2xl font-bold uppercase tracking-wider text-neutral-800">FonoFlow</h1>
-          <p className="text-sm uppercase tracking-[0.2em] text-neutral-500 mt-1">Gestão de Atendimento Fonoaudiológico Domiciliar</p>
+          <h1 className="text-2xl font-bold uppercase tracking-wider text-neutral-800">{branding.productName}</h1>
+          <p className="text-sm uppercase tracking-[0.2em] text-neutral-500 mt-1">{branding.productDescription}</p>
           <h2 className="text-lg font-bold text-neutral-700 mt-4 uppercase">
             {progressAnalysisId
               ? 'Parecer de Progresso Clínico'
@@ -397,7 +398,7 @@ function ReportPrintPage() {
           <p className="font-semibold uppercase tracking-wider text-neutral-700">{patient.professionalName || 'Profissional responsável não informado'}</p>
           <p className="mt-1 font-semibold text-neutral-600">{patient.crfa || 'CRFa não informado'}</p>
           <p className="text-neutral-450 mt-1">Carimbo e Assinatura</p>
-          <p className="text-[10px] text-neutral-400 mt-12">Relatório gerado automaticamente em {new Date().toLocaleDateString('pt-BR')} via FonoFlow.</p>
+          <p className="text-[10px] text-neutral-400 mt-12">Relatório gerado automaticamente via {branding.productName} em {new Date().toLocaleDateString('pt-BR')}.</p>
         </footer>
       </article>
     </div>

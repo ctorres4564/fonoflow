@@ -4,6 +4,7 @@ import toast from 'react-hot-toast'
 import InputField from '../components/common/InputField'
 import { useAuth } from '../contexts/useAuth'
 import { isValidEmail } from '../utils/validators'
+import { branding } from '../config/branding'
 
 function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
@@ -35,7 +36,7 @@ function ForgotPasswordPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-plum-100 via-white to-gold-100 p-4">
       <div className="w-full max-w-md rounded-2xl border border-plum-200 bg-white p-8 shadow-card">
-        <p className="text-xs uppercase tracking-[0.3em] text-plum-600">FonoFlow</p>
+        <p className="text-xs uppercase tracking-[0.3em] text-plum-600">{branding.productName}</p>
         <h1 className="mt-2 text-3xl font-bold text-noble-800">Recuperar senha</h1>
         <p className="mt-2 text-sm text-noble-500">Digite seu e-mail para receber o link de redefinição.</p>
 

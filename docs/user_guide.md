@@ -1,6 +1,6 @@
-# Guia do Usuário e Manual de Operação - FonoFlow 📖
+# Guia do Usuário e Manual de Operação - FonoSuite Space 📖
 
-O **FonoFlow** é um sistema completo e inteligente de gestão clínica de fonoaudiologia home care e consultórios. Este guia detalha todas as funcionalidades da plataforma, desde os fluxos operacionais legados até os recursos avançados de Inteligência Artificial, Prontuário, Agenda e o novo **Supervisor Seguro de Evoluções (Fase 4.1+)**.
+O **FonoSuite Space** é um sistema completo e inteligente de gestão clínica de fonoaudiologia home care e consultórios, parte do ecossistema **FonoSuite**. Este guia detalha todas as funcionalidades da plataforma, desde os fluxos operacionais legados até os recursos avançados de Inteligência Artificial, Prontuário, Agenda e o novo **Supervisor Seguro de Evoluções (Fase 4.1+)**.
 
 ---
 
@@ -54,7 +54,7 @@ Ao clicar em **Evolução** na linha de um paciente, o modal de prontuário se a
 ### Fluxo Inteligente com Supervisor de Evoluções e Quality Review
 Se o seu perfil clínico estiver com a funcionalidade ativada pelo administrador (`features.evolutionQualityReview === true`), a sua evolução passará por um fluxo seguro com validação estrutural no backend:
 
-1.  **Chave de Idempotência Estável**: O FonoFlow gera uma assinatura única automática no momento da abertura do modal de registro. Isso impede que instabilidades de internet, cliques duplos ou cliques seguidos de "Registrar" dupliquem a evolução clínica ou cobrem duas sessões do paciente.
+1.  **Chave de Idempotência Estável**: O FonoSuite Space gera uma assinatura única automática no momento da abertura do modal de registro. Isso impede que instabilidades de internet, cliques duplos ou cliques seguidos de "Registrar" dupliquem a evolução clínica ou cobrem duas sessões do paciente.
 2.  **Ditado por Voz 🎙️**: Clique em **Ditar 🎙️** e fale o progresso clínico. O sistema transcreve a fala nativamente no campo de notas.
 3.  **Melhorar Notas com IA ✨**: Escreva anotações informais (ex: *"sopro bom hoje, cansou na metade"*) e clique em **Melhorar notas ✨**. A IA clínico-assistente reescreverá a evolução no padrão técnico formal fonoaudiológico.
 4.  **Vinculação à Agenda**: Se a evolução originou-se de um atendimento marcado na agenda, a finalização marcará a consulta correspondente como `Realizado` de forma atômica no banco de dados.

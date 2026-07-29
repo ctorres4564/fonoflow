@@ -1,7 +1,7 @@
 {
-  "short_name": "FonoFlow",
-  "name": "FonoFlow - Gestão Fonoaudiológica",
-  "description": "Sistema de Gestão de Pacientes e Atendimento Fonoaudiológico Domiciliar",
+  "short_name": "FonoSuite Space",
+  "name": "FonoSuite Space - Gestão clínica para fonoaudiologia",
+  "description": "Gestão clínica para fonoaudiologia",
   "icons": [
     {
       "src": "/icon-192.png",
