@@ -21,13 +21,13 @@ body {
 }
 
 .dark body {
-  background-color: #1d1e22; /* noble-900 */
-  color: #e5e5e7; /* noble-100 */
+  background-color: #0f172a; /* noble-900 */
+  color: #f1f5f9; /* noble-100 */
 }
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: #6B4C7A #ede3f1;
+  scrollbar-color: #4f46e5 #e0e7ff;
 }
 
 *::-webkit-scrollbar {
@@ -36,11 +36,11 @@ body {
 }
 
 *::-webkit-scrollbar-track {
-  background: #ede3f1;
+  background: #e0e7ff;
 }
 
 *::-webkit-scrollbar-thumb {
-  background: #6B4C7A;
+  background: #4f46e5;
   border-radius: 999px;
 }
 
