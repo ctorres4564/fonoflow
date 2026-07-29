@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Outlet } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import { useTheme } from '../../contexts/useTheme'
+import { branding } from '../../config/branding'
 
 function AppLayout({ children }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
@@ -40,7 +41,7 @@ function AppLayout({ children }) {
               </svg>
             </button>
             <div>
-              <h2 className="text-lg font-bold text-noble-800 dark:text-noble-100">Sistema de Gestão de Pacientes</h2>
+              <h2 className="text-lg font-bold text-noble-800 dark:text-noble-100">{branding.productName}</h2>
               <p className="text-xs text-noble-500 dark:text-noble-400">Fase 1 (MVP)</p>
             </div>
           </div>

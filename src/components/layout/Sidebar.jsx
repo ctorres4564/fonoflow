@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../../contexts/useAuth'
+import { branding } from '../../config/branding'
 
 const links = [
   { to: '/dashboard', label: 'Dashboard' },
@@ -30,9 +31,9 @@ function Sidebar({ open, onClose }) {
         }`}
       >
         <div>
-          <p className="text-xs uppercase tracking-[0.3em] text-gold-300">FonoFlow</p>
-          <h1 className="mt-2 text-2xl font-bold">Gestão Clínica</h1>
-          <p className="mt-2 text-sm text-noble-200">Sistema de pacientes de fonoaudiologia</p>
+          <p className="text-xs uppercase tracking-[0.3em] text-gold-300">{branding.suiteName}</p>
+          <h1 className="mt-2 text-2xl font-bold">{branding.productName}</h1>
+          <p className="mt-2 text-sm text-noble-200">{branding.productDescription}</p>
         </div>
 
         <nav className="mt-10 flex flex-1 flex-col gap-2">

@@ -4,6 +4,7 @@ import StatCard from '../components/common/StatCard'
 import SkeletonCard from '../components/common/SkeletonCard'
 import EmptyState from '../components/common/EmptyState'
 import { getDashboardStats } from '../utils/patient'
+import { branding } from '../config/branding'
 
 function DashboardPage() {
   const { patients = [], loadingPatients, schedules = [], loadingSchedules } = useOutletContext()
@@ -197,7 +198,7 @@ function DashboardPage() {
           </button>
           
           <h3 className="text-sm font-bold text-plum-900 dark:text-white flex items-center gap-2">
-            <span>✨</span> Seja bem-vindo ao FonoFlow!
+            <span>✨</span> Seja bem-vindo ao {branding.productName}!
           </h3>
           <p className="text-xs text-noble-700 dark:text-noble-100 mt-1.5 leading-relaxed max-w-2xl">
             Preparamos um guia rápido para ajudar você a dar os primeiros passos e configurar seu consultório domiciliar em menos de 2 minutos. Siga as etapas sugeridas:

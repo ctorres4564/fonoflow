@@ -199,7 +199,7 @@ export default async function handler(request, response) {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${openRouterApiKey}`,
           'HTTP-Referer': 'https://fonoflow.vercel.app',
-          'X-Title': 'FonoFlow',
+          'X-Title': 'FonoSuite Space',
         },
         body: JSON.stringify({
           model: process.env.OPENROUTER_MODEL || 'deepseek/deepseek-chat',
