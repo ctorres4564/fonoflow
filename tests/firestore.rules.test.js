@@ -656,3 +656,51 @@ describe('consentimentos LGPD', () => {
   it('bloqueia aceite, alteração, revogação e exclusão diretos pelo cliente',async()=>{const ref=doc(firestoreFor('professional-a'),'patients/patient-consent/consents/consent-1');await assertFails(setDoc(doc(firestoreFor('professional-a'),'patients/patient-consent/consents/consent-2'),{schemaVersion:2}));await assertFails(updateDoc(ref,{revoked:true,active:false}));await assertFails(deleteDoc(ref))})
   it('protege registros de idempotência',async()=>{const ref=doc(firestoreFor('professional-a'),'consentOperations/request-1');await assertFails(getDoc(ref));await assertFails(setDoc(ref,{uid:'professional-a'}))})
 })
+
+describe('clinical attachment references', () => {
+  beforeEach(async () => {
+    await seed('patients/attachment-patient', { userId: 'professional-a', name: 'Paciente ficticio' })
+    await seed('patients/attachment-patient/evolutions/evolution-a', {
+      patientId: 'attachment-patient', professionalId: 'professional-a', status: 'finalized',
+    })
+    await seed('patients/attachment-patient/evolutions/evolution-a/attachments/document-a', {
+      documentId: 'document-a', patientId: 'attachment-patient', linkedBy: 'professional-a',
+    })
+    await seed('schedules/attachment-schedule', {
+      patientId: 'attachment-patient', userId: 'professional-a', status: 'completed',
+    })
+    await seed('schedules/attachment-schedule/attachments/document-a', {
+      documentId: 'document-a', patientId: 'attachment-patient', linkedBy: 'professional-a',
+    })
+    await seed('schedules/attachment-schedule/homeCareVisit/current', {
+      patientId: 'attachment-patient', appointmentId: 'attachment-schedule', userId: 'professional-a',
+    })
+    await seed('schedules/attachment-schedule/homeCareVisit/current/attachments/document-a', {
+      documentId: 'document-a', patientId: 'attachment-patient', linkedBy: 'professional-a',
+    })
+  })
+
+  it('allows owner to read immutable evolution, appointment and home care references', async () => {
+    const db = firestoreFor('professional-a')
+    await assertSucceeds(getDoc(doc(db, 'patients/attachment-patient/evolutions/evolution-a/attachments/document-a')))
+    await assertSucceeds(getDoc(doc(db, 'schedules/attachment-schedule/attachments/document-a')))
+    await assertSucceeds(getDoc(doc(db, 'schedules/attachment-schedule/homeCareVisit/current/attachments/document-a')))
+  })
+
+  it('denies other users and all direct mutations', async () => {
+    const foreignDb = firestoreFor('professional-b')
+    const ownerDb = firestoreFor('professional-a')
+    const evolutionRef = doc(ownerDb, 'patients/attachment-patient/evolutions/evolution-a/attachments/document-a')
+    await assertFails(getDoc(doc(foreignDb, 'patients/attachment-patient/evolutions/evolution-a/attachments/document-a')))
+    await assertFails(updateDoc(evolutionRef, { linkedBy: 'professional-b' }))
+    await assertFails(deleteDoc(evolutionRef))
+    await assertFails(setDoc(doc(ownerDb, 'schedules/attachment-schedule/attachments/document-b'), { documentId: 'document-b' }))
+  })
+
+  it('protects attachment idempotency records from clients', async () => {
+    const db = firestoreFor('professional-a')
+    const operationRef = doc(db, 'clinicalAttachmentOperations/request-a')
+    await assertFails(getDoc(operationRef))
+    await assertFails(setDoc(operationRef, { kind: 'archive' }))
+  })
+})

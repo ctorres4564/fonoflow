@@ -148,6 +148,20 @@ function auditActions(repository) {
 }
 
 describe('document storage workflow', () => {
+  it('bloqueia mídia clínica fora do fluxo de consentimento da Etapa 6B', async () => {
+    const repository = createRepository()
+    await expect(requestDocumentUpload({
+      uid: 'professional-a',
+      repository,
+      payload: uploadPayload({
+        category: 'clinical_image',
+        originalFileName: 'imagem.jpg',
+        declaredMimeType: 'image/jpeg',
+        size: 4,
+      }),
+    })).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
+
   it('autoriza upload curto em quarentena sem expor o caminho na resposta', async () => {
     const repository = createRepository()
     const result = await requestDocumentUpload({

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import {
   assertDeclaredFile,
+  DOCUMENT_CATEGORY_CONFIG,
   DOWNLOAD_TTL_MS,
   UPLOAD_TTL_MS,
 } from '../../src/config/documentStorage.js'
@@ -62,23 +63,38 @@ function createAudit(transaction, repository, details) {
   transaction.create(event.path, event.value)
 }
 
-export async function requestDocumentUpload({ uid, payload, repository, now = new Date() }) {
+export async function requestDocumentUpload({
+  uid, payload, repository, now = new Date(), clinicalAttachmentMode = false,
+}) {
   const input = parseDocumentUploadRequest(payload)
+  if (input.documentId && !clinicalAttachmentMode) {
+    throw workflowError('FORBIDDEN', 'Rascunhos clínicos exigem o fluxo de anexos.')
+  }
+  if (DOCUMENT_CATEGORY_CONFIG[input.category]?.requiredConsentType && !clinicalAttachmentMode) {
+    throw workflowError('FORBIDDEN', 'Mídia clínica exige validação de consentimento.')
+  }
   const { extension } = assertDeclaredFile({
     fileName: input.originalFileName,
     declaredMimeType: input.declaredMimeType,
     size: input.size,
   })
   const operationPath = `documentStorageOperations/${input.requestId}`
-  const [patient, storedOperation] = await Promise.all([
+  const draftPath = input.documentId
+    ? `patients/${input.patientId}/documents/${input.documentId}`
+    : null
+  const [patient, storedOperation, storedDraft] = await Promise.all([
     repository.read(`patients/${input.patientId}`),
     repository.read(operationPath),
+    draftPath ? repository.read(draftPath) : Promise.resolve(null),
   ])
   assertOwner(patient, uid)
   const storedResult = replay(storedOperation, input, 'request_upload')
   if (storedResult) return { ...storedResult, replayed: true }
+  if (draftPath && (!storedDraft || storedDraft.ownerId !== uid || storedDraft.status !== 'draft')) {
+    throw workflowError('CONFLICT', 'Rascunho documental inválido para upload.')
+  }
 
-  const documentId = repository.createId(`patients/${input.patientId}/documents`)
+  const documentId = input.documentId || repository.createId(`patients/${input.patientId}/documents`)
   const uploadId = repository.createId('documentUploads')
   const randomFileName = repository.randomName(extension)
   const quarantinePath =
@@ -99,13 +115,18 @@ export async function requestDocumentUpload({ uid, payload, repository, now = ne
   })
 
   return repository.runTransaction(async (transaction) => {
-    const [latestPatient, operation] = await transaction.readMany([
+    const paths = [
       `patients/${input.patientId}`,
       operationPath,
-    ])
+      ...(draftPath ? [draftPath] : []),
+    ]
+    const [latestPatient, operation, latestDraft] = await transaction.readMany(paths)
     assertOwner(latestPatient, uid)
     const previous = replay(operation, input, 'request_upload')
     if (previous) return { ...previous, replayed: true }
+    if (draftPath && (!latestDraft || latestDraft.ownerId !== uid || latestDraft.status !== 'draft')) {
+      throw workflowError('CONFLICT', 'Rascunho documental inválido para upload.')
+    }
 
     const timestamp = repository.timestamp()
     const document = clinicalDocumentSchema.parse({
@@ -117,6 +138,8 @@ export async function requestDocumentUpload({ uid, payload, repository, now = ne
       title: input.title,
       description: input.description,
       documentDate: input.documentDate,
+      clinicalContext: input.clinicalContext || latestDraft?.clinicalContext,
+      consentContext: input.consentContext || latestDraft?.consentContext,
       status: 'pending_upload',
       sensitivityLevel: input.sensitivityLevel,
       accessLevel: input.accessLevel,
@@ -139,11 +162,17 @@ export async function requestDocumentUpload({ uid, payload, repository, now = ne
         requestId: input.requestId,
         scanStatus: 'pending',
       },
-      createdBy: uid,
-      createdAt: timestamp,
+      attachmentFinalizedAt: latestDraft?.attachmentFinalizedAt || null,
+      archivedBy: null,
+      archivedAt: null,
+      archiveReason: null,
+      createdBy: latestDraft?.createdBy || uid,
+      createdAt: latestDraft?.createdAt || timestamp,
       updatedAt: timestamp,
     })
-    transaction.create(`patients/${input.patientId}/documents/${documentId}`, document)
+    const documentPath = `patients/${input.patientId}/documents/${documentId}`
+    if (draftPath) transaction.update(documentPath, document)
+    else transaction.create(documentPath, document)
     createAudit(transaction, repository, {
       uid,
       input,

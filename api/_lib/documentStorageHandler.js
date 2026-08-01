@@ -13,6 +13,9 @@ function httpStatus(error) {
     FORBIDDEN: 403,
     NOT_FOUND: 404,
     CONFLICT: 409,
+    CONSENT_REQUIRED: 409,
+    INVALID_LINK: 422,
+    UNSUPPORTED_SCHEMA: 422,
     FILE_BLOCKED: 422,
     INTERNAL: 500,
   }[error?.code] || 400

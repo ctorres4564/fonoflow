@@ -22,3 +22,6 @@ As três rotas exigem Bearer Firebase, validam payload estrito com Zod e confirm
 | `POST /api/gemini` | Bearer Firebase | `aiRequestSchema.strict()`, 16 KiB; `prompt` 10.000 e instruÃ§Ã£o 5.000 caracteres | identidade e cotas derivadas; `userId` rejeitado | cota transacional validada por Zod | nÃ£o persiste prontuÃ¡rio |
 
 Erros pÃºblicos nÃ£o incluem stack. Logs registram somente cÃ³digo ou nome do erro, nunca o payload clÃ­nico integral.
+# Anexos clínicos — Etapa 6B
+
+Endpoints autenticados em `/api/clinical-attachments`: `create-draft`, `request-upload`, `finalize`, `list`, `get`, `link`, `archive`, `download` e `link-options`. Todos aceitam payload Zod estrito; operações mutáveis exigem `requestId`. Upload/finalização/download delegam à Etapa 6A. Consulte `clinical-attachments-workflow.md` e `clinical-attachments-security.md`.

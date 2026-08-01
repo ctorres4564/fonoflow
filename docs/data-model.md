@@ -128,3 +128,6 @@ Aliases sÃ£o temporÃ¡rios e somente serÃ£o removidos apÃ³s migraÃ§Ã£
 | `rescheduledFromId/rescheduledToId/evolutionId` | string | nÃ£o | ligaÃ§Ãµes | transaÃ§Ã£o | nÃ£o | equivalentes | impede duplicidade |
 
 Os mappers traduzem em memória `name`, `phone`, `diagnosis`, `complaint`, `date`, `duration`, `notes`, `richContent`, horários e status em português. Contadores legados de sessões permanecem gravados temporariamente porque participam das transações idempotentes. Consulte o inventário para o mapa completo.
+# Anexos clínicos — Etapa 6B
+
+Anexos reutilizam `patients/{patientId}/documents/{documentId}` e adicionam `clinicalContext`, `consentContext`, `attachmentFinalizedAt` e campos de arquivamento. Referências imutáveis ficam nas subcoleções `attachments` de evolução, agenda e visita Home Care. Consulte `clinical-attachments-data-model.md` para campos, categorias e compatibilidade V1/V2.

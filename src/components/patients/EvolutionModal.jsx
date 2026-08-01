@@ -8,7 +8,7 @@ import { askGemini } from '../../services/geminiService'
 import { buildSanitizedPrompt, minimizeClinicalText, sanitizeAiPlainText } from '../../utils/aiPrivacy'
 import { EMPTY_RICH_CONTENT, buildEvolutionCreatePayload, isRichContentEmpty, plainTextToRichContent, richContentToPlainText, sanitizeRichContent } from '../../utils/richContent'
 import AIConsentModal from './AIConsentModal'
-import DocumentsTab from './DocumentsTab'
+import ClinicalAttachmentsTab from '../clinicalAttachments/ClinicalAttachmentsTab'
 import TherapeuticPlanTab from './TherapeuticPlanTab'
 import RichTextEditor from './RichTextEditor'
 import RichContentRenderer from './RichContentRenderer'
@@ -883,7 +883,7 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
           </div>
         </div>
 
-        <div className="mb-6 flex border-b border-noble-200 dark:border-noble-800">
+        <div className="mb-6 flex overflow-x-auto border-b border-noble-200 dark:border-noble-800">
           <button
             type="button"
             onClick={() => setActiveTab('evolutions')}
@@ -926,7 +926,7 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
                 : 'border-transparent text-noble-500 dark:text-noble-400 hover:text-noble-700 dark:hover:text-noble-200'
             }`}
           >
-            Documentos e Anexos
+            Documentos
           </button>
           <button
             type="button"
@@ -1390,7 +1390,7 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
 
         {activeTab === 'documents' && (
           <div className="flex-1 overflow-y-auto">
-            <DocumentsTab patient={patient} />
+            <ClinicalAttachmentsTab patient={patient} />
           </div>
         )}
         {activeTab === 'consents' && (

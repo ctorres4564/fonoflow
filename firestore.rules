@@ -126,6 +126,11 @@ service cloud.firestore {
           allow read: if isPatientOwner(patientId);
           allow write: if false;
         }
+
+        match /attachments/{attachmentId} {
+          allow read: if isPatientOwner(patientId);
+          allow create, update, delete: if false;
+        }
       }
 
       match /anamnesis/{anamnesisId} {
@@ -206,6 +211,18 @@ service cloud.firestore {
           request.resource.data.createdAt == resource.data.createdAt && request.resource.data.createdBy == resource.data.createdBy &&
           validHomeCareVisit(request.resource.data, scheduleId) && validHomeCareTransition(resource.data, request.resource.data);
         allow delete: if false;
+
+        match /attachments/{attachmentId} {
+          allow read: if request.auth != null &&
+            get(/databases/$(database)/documents/schedules/$(scheduleId)).data.userId == request.auth.uid;
+          allow create, update, delete: if false;
+        }
+      }
+
+      match /attachments/{attachmentId} {
+        allow read: if request.auth != null &&
+          get(/databases/$(database)/documents/schedules/$(scheduleId)).data.userId == request.auth.uid;
+        allow create, update, delete: if false;
       }
     }
 
@@ -223,6 +240,10 @@ service cloud.firestore {
     }
 
     match /documentStorageOperations/{requestId} {
+      allow read, write: if false;
+    }
+
+    match /clinicalAttachmentOperations/{requestId} {
       allow read, write: if false;
     }
 
