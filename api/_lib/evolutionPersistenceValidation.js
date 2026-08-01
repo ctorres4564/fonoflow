@@ -1,0 +1,5 @@
+import { z } from 'zod'
+const alert=z.object({code:z.string(),category:z.string(),field:z.string(),objectiveId:z.string().nullable()}).strict()
+const counts=z.object({clientReportedInitial:z.number().int().nonnegative(),final:z.number().int().nonnegative(),clientDerivedResolved:z.number().int().nonnegative(),ignored:z.number().int().nonnegative()}).strict()
+const qualityReview=z.object({reviewSchemaVersion:z.number().int().positive(),qualityRuleSetVersion:z.number().int().positive(),evolutionSchemaVersion:z.number().int().positive(),evolutionRevision:z.number().int().positive(),reviewedContentHash:z.string().startsWith('sha256:'),sessionType:z.string().min(1),clientReportedInitialAlerts:z.array(alert),finalAlerts:z.array(alert),resolvedAlerts:z.array(alert),resolvedAlertsBasis:z.literal('clientReportedInitialAlerts'),ignoredAlerts:z.array(alert),counts,reviewPasses:z.number().int().positive(),startedAt:z.string().datetime(),completedAt:z.string().datetime(),durationMs:z.number().nonnegative(),reviewedBy:z.string().min(1),createdAt:z.unknown()}).strict()
+export const parseQualityReviewWrite=(value)=>qualityReview.parse(value)

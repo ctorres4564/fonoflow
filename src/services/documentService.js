@@ -12,7 +12,8 @@ import {
   ref,
   uploadBytesResumable,
 } from 'firebase/storage'
-import { db, storage } from '../firebase/config'
+import { db } from '../firebase/config'
+import { storage } from '../firebase/storage'
 
 // Retorna a coleção de documentos de um determinado paciente
 const getDocumentsCollection = (patientId) => collection(db, 'patients', patientId, 'documents')

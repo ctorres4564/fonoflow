@@ -1,7 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { initializeTestEnvironment } from '@firebase/rules-unit-testing'
-import { getAuth } from 'firebase-admin/auth'
-import { getFirestore } from 'firebase-admin/firestore'
 import { getApps, deleteApp } from 'firebase-admin/app'
 import { execSync } from 'node:child_process'
 

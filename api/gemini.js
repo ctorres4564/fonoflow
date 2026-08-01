@@ -1,6 +1,7 @@
 import { cert, getApps, initializeApp } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { getFirestore, FieldValue } from 'firebase-admin/firestore'
+import { parseAiRequest,parseMinuteQuotaWrite,parseMonthlyQuotaWrite } from './_lib/geminiValidation.js'
 
 const DEMO_MONTHLY_LIMIT = 20
 const PREMIUM_MONTHLY_LIMIT = Number(process.env.PREMIUM_AI_MONTHLY_LIMIT || 1000)
@@ -103,19 +104,19 @@ async function consumeAiQuota(app, uid) {
       return { allowed: false, status: 429, error: `Cota mensal de IA do plano ${plan} excedida.` }
     }
 
-    transaction.set(monthlyRef, {
+    transaction.set(monthlyRef, parseMonthlyQuotaWrite({
       uid,
       month,
       plan,
       count: monthlyCount + 1,
       updatedAt: FieldValue.serverTimestamp(),
-    }, { merge: true })
-    transaction.set(minuteRef, {
+    }), { merge: true })
+    transaction.set(minuteRef, parseMinuteQuotaWrite({
       uid,
       minute,
       count: minuteCount + 1,
       expiresAt: new Date(now.getTime() + 2 * 60 * 1000),
-    }, { merge: true })
+    }), { merge: true })
 
     return { allowed: true, plan, remaining: monthlyLimit - monthlyCount - 1 }
   })
@@ -146,19 +147,9 @@ export default async function handler(request, response) {
 
   const authenticatedUid = decodedToken.uid
 
-  const { prompt, systemInstruction } = request.body
-
-  if (!prompt || typeof prompt !== 'string') {
-    return response.status(400).json({ error: 'Prompt is required and must be a string' })
-  }
-
-  if (prompt.length > 10000) {
-    return response.status(400).json({ error: 'Prompt is too long (maximum 10,000 characters)' })
-  }
-
-  if (systemInstruction && (typeof systemInstruction !== 'string' || systemInstruction.length > 5000)) {
-    return response.status(400).json({ error: 'System instruction is invalid or too long' })
-  }
+  let input
+  try { input=parseAiRequest(request.body) } catch(error) { const tooLarge=error?.message==='PAYLOAD_TOO_LARGE';return response.status(tooLarge?413:400).json({error:{code:tooLarge?'PAYLOAD_TOO_LARGE':'INVALID_PAYLOAD',message:tooLarge?'Corpo da requisiÃ§Ã£o excede o limite.':'Payload invÃ¡lido.'}}) }
+  const {prompt,systemInstruction}=input
 
   let quota
   try {

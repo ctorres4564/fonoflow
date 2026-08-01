@@ -5,14 +5,25 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:homologation": "vite --mode homologation",
+    "emulators:homologation": "firebase emulators:start --only firestore,auth --project demo-fonoflow",
     "build": "vite build",
     "lint": "oxlint",
-    "test": "vitest run --exclude tests/firestore.rules.test.js --exclude api/_lib/evolutionFinalizeEmulator.test.js --exclude api/_lib/evolutionFinalizeAdminScript.test.js",
+    "test": "vitest run --exclude tests/firestore.rules.test.js --exclude api/_lib/evolutionFinalizeEmulator.test.js --exclude api/_lib/evolutionFinalizeAdminScript.test.js --exclude api/_lib/homeCareEmulator.test.js",
     "test:emulator": "firebase emulators:exec --only firestore,auth --project demo-fonoflow \"npm run test:emulator:unit\"",
-    "test:emulator:unit": "vitest run api/_lib/evolutionFinalizeEmulator.test.js api/_lib/evolutionFinalizeAdminScript.test.js",
+    "test:emulator:unit": "vitest run --no-file-parallelism api/_lib/evolutionFinalizeEmulator.test.js api/_lib/evolutionFinalizeAdminScript.test.js api/_lib/homeCareEmulator.test.js",
+    "test:emulator:repeat": "firebase emulators:exec --only firestore,auth --project demo-fonoflow \"node scripts/repeat-emulator-tests.js\"",
     "test:rules": "firebase emulators:exec --only firestore --project demo-fonoflow \"npm run test:rules:unit\"",
     "test:rules:unit": "vitest run tests/firestore.rules.test.js",
     "test:watch": "vitest",
+    "migrate:patients:dry": "node scripts/migrate-patients-v1-to-v2.js --dry-run",
+    "migrate:patients": "node scripts/migrate-patients-v1-to-v2.js --execute --confirm-write",
+    "migrate:evolutions:dry": "node scripts/migrate-evolutions-v1-to-v2.js --dry-run",
+    "migrate:evolutions": "node scripts/migrate-evolutions-v1-to-v2.js --execute --confirm-write",
+    "migrate:appointments:dry": "node scripts/migrate-appointments-v1-to-v2.js --dry-run",
+    "migrate:appointments": "node scripts/migrate-appointments-v1-to-v2.js --execute --confirm-write",
+    "seed:schema:fixtures": "node scripts/seed-schema-migration-fixtures.js",
+    "test:migrations:dry": "firebase emulators:exec --only firestore --project demo-fonoflow \"node scripts/verify-schema-migrations.js\"",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -27,7 +38,8 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-hot-toast": "^2.6.0",
-    "react-router-dom": "^7.18.1"
+    "react-router-dom": "^7.18.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.1",

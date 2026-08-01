@@ -2,9 +2,16 @@ import { createHash } from 'node:crypto'
 import { calculateEvolutionSha256, prepareEvolutionFinalizeOperation } from './evolutionFinalizeService.js'
 import { validateFinalizePayload, validateIdempotencyKey } from './evolutionFinalizeValidation.js'
 import { FINALIZE_ERROR_CODES, finalizeError } from './evolutionFinalizeErrors.js'
+import { parseAppointmentForUpdate, parseEvolutionFinalize, parsePatientForUpdate } from '../../src/schemas/persistence.parsers.js'
+import { calculateSessionAccounting } from '../../src/domain/appointments/appointmentTransitions.js'
+import { normalizePatientDocument } from '../../src/mappers/patient.mapper.js'
+import { normalizeAppointmentDocument } from '../../src/mappers/appointment.mapper.js'
+import { convertAppointmentV1ToV2 } from '../../src/mappers/appointment.mapper.js'
+import { convertPatientV1ToV2 } from '../../src/mappers/patient.mapper.js'
+import { parseQualityReviewWrite } from './evolutionPersistenceValidation.js'
 
 const REVIEW_ID = 'revision-1'
-const COMPLETABLE_SCHEDULE_STATUSES = new Set(['Agendado', 'Confirmado'])
+const COMPLETABLE_SCHEDULE_STATUSES = new Set(['scheduled', 'confirmed'])
 const OBJECTIVE_STATUSES = new Set(['Não iniciado', 'Em desenvolvimento', 'Parcialmente atingido', 'Atingido', 'Reavaliar', 'Suspenso'])
 const AUDIT_CHANGED_FIELDS = Object.freeze([
   'schemaVersion', 'evolutionRevision', 'sessionType', 'date', 'duration', 'clinicalActivity',
@@ -103,6 +110,8 @@ export async function finalizeEvolutionCreate({ uid, method = 'POST', idempotenc
     authorizeProfile(profile)
     if (!patient) throw finalizeError(FINALIZE_ERROR_CODES.NOT_FOUND, 'patient_not_found')
     if (patient.userId !== uid) throw finalizeError(FINALIZE_ERROR_CODES.FORBIDDEN, 'patient_not_owned')
+    const currentPatientV2=convertPatientV1ToV2(patient)
+    const normalizedPatient = normalizePatientDocument({ id: validated.patientId, ...currentPatientV2 })
 
     if (previous) {
       if (previous.uid !== uid || previous.operation !== 'create' || previous.patientId !== validated.patientId || previous.clinicalContentHash !== inputHash) {
@@ -111,28 +120,50 @@ export async function finalizeEvolutionCreate({ uid, method = 'POST', idempotenc
       return success(previous.evolutionId, true)
     }
 
-    if (patient.status !== 'Ativo') throw finalizeError(FINALIZE_ERROR_CODES.CONFLICT, 'patient_not_active')
+    if (normalizedPatient.patientStatusV2 !== 'active') throw finalizeError(FINALIZE_ERROR_CODES.CONFLICT, 'patient_not_active')
 
     if (validated.scheduleId) {
       if (!schedule) throw finalizeError(FINALIZE_ERROR_CODES.NOT_FOUND, 'schedule_not_found')
       if (schedule.patientId !== validated.patientId || schedule.userId !== uid) throw finalizeError(FINALIZE_ERROR_CODES.FORBIDDEN, 'schedule_not_owned')
-      if (!COMPLETABLE_SCHEDULE_STATUSES.has(schedule.status) || schedule.evolutionId) throw finalizeError(FINALIZE_ERROR_CODES.CONFLICT, 'schedule_not_completable')
-      if (schedule.sessionType !== validated.evolution.sessionType) throw finalizeError(FINALIZE_ERROR_CODES.CONFLICT, 'schedule_session_type_conflict')
+      const normalizedSchedule=normalizeAppointmentDocument({id:validated.scheduleId,...schedule})
+      if (!COMPLETABLE_SCHEDULE_STATUSES.has(normalizedSchedule.appointmentStatusV2) || schedule.evolutionId) throw finalizeError(FINALIZE_ERROR_CODES.CONFLICT, 'schedule_not_completable')
+      if (normalizedSchedule.sessionType !== validated.evolution.sessionType) throw finalizeError(FINALIZE_ERROR_CODES.CONFLICT, 'schedule_session_type_conflict')
     }
 
     const evolutionWithContext = authoritativeEvolution(payload.evolution, plan)
     const normalizedPayload = { ...payload, evolution: evolutionWithContext }
     const operation = prepareEvolutionFinalizeOperation({ method, idempotencyKey: key, payload: normalizedPayload, therapeuticPlan: plan })
     const timestamp = repository.serverTimestamp()
-    const evolution = {
+    const evolutionCandidate = {
       ...operation.evolution,
+      schemaVersion: 2,
+      patientId: validated.patientId,
+      professionalId: uid,
+      appointmentId: validated.scheduleId,
+      serviceDate: operation.evolution.date,
+      durationMinutes: operation.evolution.duration,
+      structuredContent: {
+        sessionObjectives: operation.evolution.objectiveProgress.map((item) => item.description).filter(Boolean),
+        procedures: [],
+        clinicalFindings: operation.evolution.clinicalActivity || null,
+        patientResponse: operation.evolution.observedResponse || null,
+        performanceSummary: null,
+        incidents: null,
+        familyGuidance: null,
+        nextSessionPlan: operation.evolution.nextStep || null,
+      },
+      richText: { html: null, json: operation.evolution.richContent || null, plainText: operation.evolution.notes || operation.evolution.clinicalActivity },
+      status: 'finalized',
+      finalizedAt: timestamp,
+      finalizedBy: uid,
       evolutionRevision: 1,
       scheduleId: validated.scheduleId,
       reviewedContentHash: operation.reviewedContentHash,
       createdAt: timestamp,
       createdBy: uid,
     }
-    const review = {
+    const evolution = parseEvolutionFinalize(evolutionCandidate, validated.patientId, uid, timestamp)
+    const review = parseQualityReviewWrite({
       reviewSchemaVersion: operation.review.reviewSchemaVersion,
       qualityRuleSetVersion: operation.review.qualityRuleSetVersion,
       evolutionSchemaVersion: operation.review.evolutionSchemaVersion,
@@ -156,7 +187,7 @@ export async function finalizeEvolutionCreate({ uid, method = 'POST', idempotenc
       durationMs: operation.review.durationMs,
       reviewedBy: uid,
       createdAt: timestamp,
-    }
+    })
 
     transaction.create(paths.evolution, evolution)
     transaction.create(paths.review, review)
@@ -173,19 +204,18 @@ export async function finalizeEvolutionCreate({ uid, method = 'POST', idempotenc
 
     const patientUpdates = { updatedAt: timestamp }
     if (validated.incrementSession) {
-      const completedSessions = (Number(patient.completedSessions) || 0) + 1
-      const remainingSessions = Math.max((Number(patient.totalSessions) || 0) - completedSessions, 0)
-      Object.assign(patientUpdates, { completedSessions, remainingSessions, status: remainingSessions > 0 ? 'Ativo' : 'Finalizado' })
+      const accounting = calculateSessionAccounting(normalizedPatient, true)
+      Object.assign(patientUpdates, { completedSessions: accounting.completedSessions, remainingSessions: accounting.remainingSessions, administrative: { ...currentPatientV2.administrative, completedSessions: accounting.completedSessions }, status: accounting.remainingSessions > 0 ? 'active' : 'discharged' })
     }
     if (plan && operation.evolution.objectiveProgress.length > 0) {
       const objectives = applyObjectiveProgress(plan.objectives, operation.evolution.objectiveProgress, now)
       transaction.update(paths.plan, { objectives, updatedAt: timestamp })
       patientUpdates.therapeuticAchievedCount = objectives.filter((objective) => objective.status === 'Atingido').length
     }
-    transaction.update(paths.patient, patientUpdates)
-    if (paths.schedule) transaction.update(paths.schedule, {
-      status: 'Realizado', evolutionId, sessionDeducted: true, completedAt: timestamp, updatedAt: timestamp,
-    })
+    transaction.update(paths.patient, parsePatientForUpdate(patientUpdates, currentPatientV2, uid, timestamp))
+    if (paths.schedule) transaction.update(paths.schedule, parseAppointmentForUpdate({
+      schemaVersion: 2, status: 'completed', evolutionId, sessionDeducted: true, sessionAccounting: { ...(schedule.sessionAccounting || {}), deductSession: true, deductedAt: timestamp, deductionOperationId: operationId }, completedAt: timestamp, updatedAt: timestamp,
+    }, convertAppointmentV1ToV2(schedule), timestamp))
     return success(evolutionId, false)
   })
 }

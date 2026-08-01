@@ -6,6 +6,7 @@ const links = [
   { to: '/dashboard', label: 'Dashboard' },
   { to: '/pacientes', label: 'Pacientes' },
   { to: '/agenda', label: 'Agenda' },
+  { to: '/home-care', label: 'Home Care' },
   { to: '/auditoria', label: 'Auditoria' },
   { to: '/guia', label: 'Guia de Uso' },
 ]

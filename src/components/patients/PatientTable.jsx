@@ -1,5 +1,18 @@
 import { calculateRemainingSessions, getPatientStatus } from '../../utils/patient'
 
+export function ClinicalAlerts({ alerts = {} }) {
+  const items = [
+    ...(alerts.allergies?.length ? [`Alergias: ${alerts.allergies.join(', ')}`] : []),
+    ...(alerts.medications?.length ? [`Medicamentos: ${alerts.medications.join(', ')}`] : []),
+    ...([['aspirationRisk','Risco de aspiraÃ§Ã£o'],['tracheostomy','Traqueostomia'],['gastrostomy','Gastrostomia'],['oxygenUse','Uso de oxigÃªnio'],['epilepsy','Epilepsia']].filter(([key])=>alerts[key]).map(([,label])=>label)),
+    ...(alerts.dietaryRestrictions?.length ? [`RestriÃ§Ãµes alimentares: ${alerts.dietaryRestrictions.join(', ')}`] : []),
+    ...(alerts.mobilityRestrictions?.length ? [`RestriÃ§Ãµes de mobilidade: ${alerts.mobilityRestrictions.join(', ')}`] : []),
+    ...(alerts.otherAlerts || []),
+  ]
+  if (!items.length) return null
+  return <div role="alert" aria-label="Alertas clÃ­nicos" className="mt-2 rounded-lg border border-red-300 bg-red-50 p-2 text-xs text-red-900 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200"><strong>Alerta clÃ­nico:</strong> {items.join(' â€¢ ')}</div>
+}
+
 function PatientTable({ patients, onEdit, onDelete, onEvolution }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-noble-200 dark:border-noble-800 bg-white dark:bg-noble-900 shadow-card transition-colors duration-200">
@@ -49,6 +62,7 @@ function PatientTable({ patients, onEdit, onDelete, onEvolution }) {
                           Queixa: {patient.complaint}
                         </p>
                       )}
+                      <ClinicalAlerts alerts={patient.clinicalAlerts} />
                     </div>
                   </td>
                   <td className="px-4 py-3 text-noble-700 dark:text-noble-300">{patient.phone}</td>

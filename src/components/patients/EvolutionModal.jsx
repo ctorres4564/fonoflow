@@ -467,7 +467,7 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
     try {
       const draftId = await saveEvolutionDraft(
         patient.id,
-        { ...formValues, notes: formValues.notes.trim() },
+        { ...formValues, notes: formValues.notes.trim(), professionalId: authorId },
         selectedDraftId,
       )
       setSelectedDraftId(draftId)

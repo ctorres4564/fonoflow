@@ -478,6 +478,7 @@ function AgendaPage() {
         isOpen={!!scheduleToChangeStatus}
         onClose={() => setScheduleToChangeStatus(null)}
         schedule={scheduleToChangeStatus}
+        userId={user?.uid}
       />
     </div>
   )

@@ -44,6 +44,18 @@ afterAll(async () => {
 })
 
 describe('patients', () => {
+  const patientV2 = (overrides = {}) => ({
+    schemaVersion: 2, userId: 'professional-a', status: 'active',
+    personalData: { fullName: 'Paciente V2' }, homeCare: { enabled: true },
+    ...overrides,
+  })
+
+  it('aceita paciente V2 válido e rejeita campos críticos inválidos', async () => {
+    const db = firestoreFor('professional-a')
+    await assertSucceeds(setDoc(doc(db, 'patients', 'patient-v2'), patientV2()))
+    await assertFails(setDoc(doc(db, 'patients', 'patient-invalid'), patientV2({ personalData: { fullName: '' } })))
+    await assertFails(setDoc(doc(db, 'patients', 'patient-future'), patientV2({ schemaVersion: 3 })))
+  })
   it('permite criar e ler o próprio paciente', async () => {
     const db = firestoreFor('professional-a')
     const patientRef = doc(db, 'patients', 'patient-a')
@@ -72,6 +84,37 @@ describe('patients', () => {
     const anonymousDb = testEnv.unauthenticatedContext().firestore()
 
     await assertFails(getDoc(doc(anonymousDb, 'patients', 'patient-a')))
+  })
+})
+
+describe('schedule V2', () => {
+  it('aceita contrato válido e rejeita débito sem estrutura protegida', async () => {
+    const db = firestoreFor('professional-a')
+    const base = { schemaVersion:2,userId:'professional-a',patientId:'patient-a',serviceType:'home_care',status:'scheduled',sessionAccounting:{deductSession:false} }
+    await assertSucceeds(setDoc(doc(db,'schedules','v2-ok'),base))
+    await assertFails(setDoc(doc(db,'schedules','v2-invalid'),{...base,sessionAccounting:{deductSession:'yes'}}))
+  })
+})
+
+describe('home care visit', () => {
+  const schedule = { schemaVersion:2,userId:'professional-a',patientId:'patient-a',serviceType:'home_care',status:'scheduled',sessionAccounting:{deductSession:false} }
+  const visit = (overrides={}) => ({ schemaVersion:1,appointmentId:'schedule-a',patientId:'patient-a',professionalId:'professional-a',userId:'professional-a',status:'planned',location:{addressSnapshot:{}},schedule:{scheduledStart:'start',scheduledEnd:'end'},travel:{},service:{},occurrence:{type:'none',description:null},createdAt:'now',createdBy:'professional-a',updatedAt:null,updatedBy:null,...overrides })
+  beforeEach(async () => { await seed('schedules/schedule-a', schedule) })
+  it('permite ao proprietário criar, ler e avançar a visita', async () => {
+    const db=firestoreFor('professional-a'); const ref=doc(db,'schedules/schedule-a/homeCareVisit/current')
+    await assertSucceeds(setDoc(ref,visit())); await assertSucceeds(getDoc(ref)); await assertSucceeds(updateDoc(ref,{status:'in_transit'}))
+  })
+  it('rejeita outro usuário e userId forjado', async () => {
+    const other=firestoreFor('professional-b'); await assertFails(setDoc(doc(other,'schedules/schedule-a/homeCareVisit/current'),visit({userId:'professional-b',professionalId:'professional-b'})))
+    const owner=firestoreFor('professional-a'); await assertFails(setDoc(doc(owner,'schedules/schedule-a/homeCareVisit/current'),visit({userId:'forged'})))
+  })
+  it('rejeita transição inválida, alteração terminal e exclusão', async () => {
+    await seed('schedules/schedule-a/homeCareVisit/current',visit({status:'completed'})); const db=firestoreFor('professional-a'); const ref=doc(db,'schedules/schedule-a/homeCareVisit/current')
+    await assertFails(updateDoc(ref,{status:'arrived'})); await assertFails(deleteDoc(ref))
+  })
+  it('protege identificadores e histórico operacional', async () => {
+    await seed('schedules/schedule-a/homeCareVisit/current',visit()); const db=firestoreFor('professional-a'); const ref=doc(db,'schedules/schedule-a/homeCareVisit/current')
+    await assertFails(updateDoc(ref,{patientId:'other'})); await assertFails(updateDoc(ref,{appointmentId:'other'}))
   })
 })
 
@@ -220,6 +263,7 @@ describe('evolution annulment', () => {
     const evolutionRef = doc(db, 'patients/patient-a/evolutions/evolution-1')
 
     await assertSucceeds(updateDoc(evolutionRef, {
+      status: 'voided',
       voided: true,
       voidedAt: '2026-07-20T00:00:00.000Z',
       voidedBy: 'professional-a',
@@ -357,7 +401,7 @@ describe('schedule status history', () => {
   it('permite ao proprietário criar e ler eventos imutáveis de status', async () => {
     const db = firestoreFor('professional-a')
     const historyRef = doc(db, 'schedules/schedule-1/statusHistory/history-1')
-    await assertSucceeds(setDoc(historyRef, { previousStatus: 'Agendado', status: 'Confirmado' }))
+    await assertSucceeds(setDoc(historyRef, { previousStatus: 'scheduled', status: 'confirmed', actorId: 'professional-a', operationId: 'history-1' }))
     await assertSucceeds(getDoc(historyRef))
     await assertFails(updateDoc(historyRef, { status: 'Falta' }))
     await assertFails(deleteDoc(historyRef))

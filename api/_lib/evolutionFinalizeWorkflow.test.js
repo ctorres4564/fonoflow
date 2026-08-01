@@ -62,7 +62,7 @@ class FakeRepository {
 function repository(extra = {}) {
   return new FakeRepository({
     'users/professional-1': { uid: 'professional-1', features: { evolutionQualityReview: true } },
-    'patients/patient-1': { userId: 'professional-1', status: 'Ativo', completedSessions: 2, totalSessions: 10, remainingSessions: 8 },
+    'patients/patient-1': { userId: 'professional-1', name: 'Paciente de teste', status: 'Ativo', completedSessions: 2, totalSessions: 10, remainingSessions: 8 },
     ...extra,
   })
 }
@@ -98,7 +98,7 @@ describe('paciente, agenda e sessões', () => {
   })
 
   it('rejeita paciente Finalizado', () => expectCode(execute(repository({
-    'patients/patient-1': { userId: 'professional-1', status: 'Finalizado' },
+    'patients/patient-1': { userId: 'professional-1', name:'Paciente finalizado', status: 'Finalizado' },
   })), 'CONFLICT'))
 
   it('rejeita paciente de outro usuário', () => expectCode(execute(repository({
@@ -110,39 +110,39 @@ describe('paciente, agenda e sessões', () => {
   it('evolução avulsa com incrementSession=false não altera contadores', async () => {
     const repo = repository()
     await execute(repo)
-    expect(repo.documents.get('patients/patient-1')).toMatchObject({ completedSessions: 2, remainingSessions: 8, status: 'Ativo' })
+    expect(repo.documents.get('patients/patient-1')).toMatchObject({ schemaVersion:2,completedSessions: 2, remainingSessions: 8, status: 'active' })
   })
 
   it('evolução avulsa com incrementSession=true aplica a contabilização atual', async () => {
     const repo = repository()
     await execute(repo, payload({ incrementSession: true }))
-    expect(repo.documents.get('patients/patient-1')).toMatchObject({ completedSessions: 3, remainingSessions: 7, status: 'Ativo' })
+    expect(repo.documents.get('patients/patient-1')).toMatchObject({ schemaVersion:2,completedSessions: 3, remainingSessions: 7, status: 'active' })
   })
 
   it('agendamento exige incrementSession=true', () => expectCode(execute(repository(), payload({ scheduleId: 'schedule-1', incrementSession: false })), 'INVALID_PAYLOAD'))
 
   it('conclui agendamento e contabiliza exatamente uma vez', async () => {
     const repo = repository({
-      'schedules/schedule-1': { patientId: 'patient-1', userId: 'professional-1', status: 'Agendado', sessionType: 'Terapia' },
+      'schedules/schedule-1': { patientId: 'patient-1', userId: 'professional-1', status: 'Agendado', sessionType: 'Terapia', date:'2026-07-20', startTime:'10:00', endTime:'10:50' },
     })
     const scheduled = payload({ scheduleId: 'schedule-1', incrementSession: true })
     await execute(repo, scheduled)
     const replay = await execute(repo, scheduled)
     expect(replay.replayed).toBe(true)
     expect(repo.documents.get('patients/patient-1').completedSessions).toBe(3)
-    expect(repo.documents.get('schedules/schedule-1')).toMatchObject({ status: 'Realizado', sessionDeducted: true })
+    expect(repo.documents.get('schedules/schedule-1')).toMatchObject({ schemaVersion: 2, status: 'completed', sessionDeducted: true, sessionAccounting: { deductSession: true } })
   })
 
   it('rejeita agendamento já concluído com outra chave', async () => {
     const repo = repository({
-      'schedules/schedule-1': { patientId: 'patient-1', userId: 'professional-1', status: 'Realizado', sessionType: 'Terapia', evolutionId: 'old' },
+      'schedules/schedule-1': { patientId: 'patient-1', userId: 'professional-1', status: 'Realizado', sessionType: 'Terapia', evolutionId: 'old', date:'2026-07-20', startTime:'10:00', endTime:'10:50' },
     })
     await expectCode(execute(repo, payload({ scheduleId: 'schedule-1', incrementSession: true })), 'CONFLICT')
   })
 
   it('rejeita estado de agenda que não permite conclusão', async () => {
     const repo = repository({
-      'schedules/schedule-1': { patientId: 'patient-1', userId: 'professional-1', status: 'Cancelado pelo paciente', sessionType: 'Terapia' },
+      'schedules/schedule-1': { patientId: 'patient-1', userId: 'professional-1', status: 'Cancelado pelo paciente', sessionType: 'Terapia', date:'2026-07-20', startTime:'10:00', endTime:'10:50' },
     })
     await expectCode(execute(repo, payload({ scheduleId: 'schedule-1', incrementSession: true })), 'CONFLICT')
   })

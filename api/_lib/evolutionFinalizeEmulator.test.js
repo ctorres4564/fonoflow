@@ -45,7 +45,7 @@ emulatorDescribe('transação real no Firestore Emulator', () => {
     }
     await db.doc('users/professional-1').set({ features: { evolutionQualityReview: true } })
     await db.doc('patients/patient-1').set({
-      userId: 'professional-1', status: 'Ativo', completedSessions: 2, totalSessions: 10, remainingSessions: 8,
+      userId: 'professional-1', name:'Paciente de teste', status: 'Ativo', completedSessions: 2, totalSessions: 10, remainingSessions: 8,
     })
   })
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import EmptyState from '../components/common/EmptyState'
@@ -7,7 +7,7 @@ import PatientFormModal from '../components/patients/PatientFormModal'
 import PatientTable from '../components/patients/PatientTable'
 import EvolutionModal from '../components/patients/EvolutionModal'
 import { useAuth } from '../contexts/useAuth'
-import { createPatient, removePatient, updatePatient } from '../services/patientService'
+import { createPatient, removePatient, searchPatients, updatePatient } from '../services/patientService'
 import { normalizePatientPayload } from '../utils/patient'
 import { onlyDigits } from '../utils/validators'
 
@@ -18,12 +18,14 @@ function PatientsPage() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [selectedPatient, setSelectedPatient] = useState(null)
   const [loadingForm, setLoadingForm] = useState(false)
+  const [indexedResults, setIndexedResults] = useState(null)
 
   // Estados para o modal de evoluções
   const [isEvolutionOpen, setIsEvolutionOpen] = useState(false)
   const [evolutionPatient, setEvolutionPatient] = useState(null)
 
   const filteredPatients = useMemo(() => {
+    if (indexedResults) return indexedResults
     const term = search.toLowerCase().trim()
     const termDigits = onlyDigits(search)
 
@@ -32,7 +34,37 @@ function PatientsPage() {
       const byPhone = onlyDigits(patient.phone || '').includes(termDigits)
       return byName || (termDigits && byPhone)
     })
-  }, [patients, search])
+  }, [patients, search, indexedResults])
+
+  useEffect(() => {
+    const term = search.trim()
+    if (term.length < 2 || !user?.uid) {
+      setIndexedResults(null)
+      return undefined
+    }
+    let active = true
+    const timer = setTimeout(async () => {
+      try {
+        const containsOnlyPhoneCharacters = term.replace(/[\d\s()+-]/g, '') === ''
+        const mode = containsOnlyPhoneCharacters ? 'phone' : 'name'
+        const results = await searchPatients(user.uid, term, mode)
+        const normalizedTerm = term.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+        const digits = onlyDigits(term)
+        const compatibleLocalResults = patients.filter((patient) => (
+          mode === 'phone'
+            ? onlyDigits(patient.phone || '').includes(digits)
+            : patient.name?.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().includes(normalizedTerm)
+        ))
+        const merged = new Map([...results, ...compatibleLocalResults].map((patient) => [patient.id, patient]))
+        if (active) setIndexedResults([...merged.values()])
+      } catch (error) {
+        // MantÃ©m a busca local como fallback enquanto o Ã­ndice Ã© implantado.
+        console.warn('Indexed patient search unavailable:', error?.code || error?.name)
+        if (active) setIndexedResults(null)
+      }
+    }, 250)
+    return () => { active = false; clearTimeout(timer) }
+  }, [patients, search, user?.uid])
 
   const openCreateModal = () => {
     setSelectedPatient(null)

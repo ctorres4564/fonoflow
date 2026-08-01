@@ -1,0 +1,4 @@
+import { describe,expect,it } from 'vitest'
+import { parseAuditBody,parseAuditQuery } from './auditValidation'
+const valid={action:'patient.updated',patientId:'patient-1',resourceId:'patient-1',changedFields:['status']}
+describe('contrato de auditoria',()=>{it('aceita payload estrito e limita consulta',()=>{expect(parseAuditBody(valid).action).toBe('patient.updated');expect(parseAuditQuery({limit:'200'}).limit).toBe(200)});it('rejeita campo desconhecido e userId forjado',()=>{expect(()=>parseAuditBody({...valid,clinicalContent:'sigiloso'})).toThrow();expect(()=>parseAuditBody({...valid,userId:'forjado'})).toThrow()});it('rejeita corpo excessivo e identificador invÃ¡lido',()=>{expect(()=>parseAuditBody({...valid,changedFields:['x'.repeat(17000)]})).toThrow();expect(()=>parseAuditBody({...valid,patientId:'a/b'})).toThrow()})})
