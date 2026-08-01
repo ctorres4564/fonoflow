@@ -33,3 +33,7 @@ O log contém ator, paciente, IDs técnicos, requestId, ação, estado, MIME det
 - produção: `mock` e `always_clean` interrompem a inicialização; sem integração real, o scanner retorna falha e o arquivo não é liberado.
 
 Variáveis: `FIREBASE_STORAGE_BUCKET`, `DOCUMENT_MALWARE_SCANNER` e `DOCUMENT_SCAN_TIMEOUT_MS`. Segredos existem apenas no backend.
+
+## Atualização da Etapa 6C
+
+Versões novas são assinadas com HMAC-SHA256. Divergência de arquivo ou metadados define `integrityBlocked` e impede download. Legal hold prevalece sobre arquivamento. Consulte `document-versioning-security.md`.

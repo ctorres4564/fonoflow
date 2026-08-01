@@ -16,6 +16,7 @@ import {
   parseDocumentUploadRequest,
 } from '../../src/schemas/documentStorage.schema.js'
 import { inspectFile, sha256 } from './fileInspection.js'
+import { documentVersionSchema } from '../../src/schemas/documentVersion.schema.js'
 
 const workflowError = (code, message) => Object.assign(new Error(message), { code })
 const fingerprint = (value) =>
@@ -144,6 +145,18 @@ export async function requestDocumentUpload({
       sensitivityLevel: input.sensitivityLevel,
       accessLevel: input.accessLevel,
       currentVersionId: null,
+      currentVersionNumber: null,
+      totalVersions: 0,
+      lastVersionCreatedAt: null,
+      retentionPolicyId: null,
+      retentionStatus: 'not_applicable',
+      retentionUntil: null,
+      retentionReviewAt: null,
+      legalHold: false,
+      legalHoldReason: null,
+      legalHoldAt: null,
+      legalHoldBy: null,
+      integrityBlocked: false,
       file: {
         schemaVersion: 2,
         uploadId,
@@ -193,7 +206,7 @@ export async function requestDocumentUpload({
   })
 }
 
-export async function finalizeDocumentUpload({ uid, payload, repository, scanner }) {
+export async function finalizeDocumentUpload({ uid, payload, repository, scanner, integrityService = null }) {
   const input = parseDocumentFinalizeRequest(payload)
   const documentPath = `patients/${input.patientId}/documents/${input.documentId}`
   const operationPath = `documentStorageOperations/${input.requestId}`
@@ -403,6 +416,21 @@ export async function finalizeDocumentUpload({ uid, payload, repository, scanner
     available: finalStatus === 'available',
   }
 
+  let duplicate = {
+    detected: false, scope: null, matchingDocumentId: null, matchingVersionId: null,
+  }
+  if (versionId && typeof repository.listPatientVersions === 'function') {
+    const matching = (await repository.listPatientVersions(input.patientId)).find((candidate) =>
+      candidate.id !== versionId &&
+      (candidate.value.fileMetadata?.sha256 || candidate.value.sha256) === inspection.sha256,
+    )
+    if (matching) duplicate = {
+      detected: true,
+      scope: matching.documentId === input.documentId ? 'same_document' : 'patient_document',
+      matchingDocumentId: matching.documentId, matchingVersionId: matching.id,
+    }
+  }
+
   return repository.runTransaction(async (transaction) => {
     const [latest, operation] = await transaction.readMany([documentPath, operationPath])
     const previous = replay(operation, input, 'finalize_upload')
@@ -414,6 +442,13 @@ export async function finalizeDocumentUpload({ uid, payload, repository, scanner
     transaction.update(documentPath, {
       status: finalStatus,
       currentVersionId: versionId,
+      currentVersionNumber: versionId ? 1 : null,
+      totalVersions: versionId ? 1 : 0,
+      lastVersionCreatedAt: versionId ? timestamp : null,
+      retentionPolicyId: latest.retentionPolicyId || null,
+      retentionStatus: latest.retentionStatus || 'not_applicable',
+      legalHold: latest.legalHold === true,
+      integrityBlocked: false,
       updatedAt: timestamp,
       file: {
         ...latest.file,
@@ -437,17 +472,32 @@ export async function finalizeDocumentUpload({ uid, payload, repository, scanner
       updatedAt: timestamp,
     })
     if (versionId) {
-      transaction.create(`${documentPath}/versions/${versionId}`, {
-        schemaVersion: 2,
-        documentId: input.documentId,
-        versionId,
-        storagePath: targetPath,
-        sha256: inspection.sha256,
-        size: inspection.size,
-        detectedMimeType: inspection.detectedMimeType,
-        createdBy: uid,
-        createdAt: timestamp,
-      })
+      const baseVersion = {
+        schemaVersion: 2, documentId: input.documentId, patientId: input.patientId,
+        ownerId: uid, versionId, versionNumber: 1, previousVersionId: null,
+        supersedesVersionId: null, changeReason: 'Versão inicial',
+        duplicateJustification: null, status: 'current', uploadRequest: null,
+        fileMetadata: {
+          uploadId: input.uploadId, originalFileName: latest.file.originalFileName,
+          randomFileName: latest.file.randomFileName, storagePath: targetPath,
+          declaredMimeType: latest.file.declaredMimeType,
+          detectedMimeType: inspection.detectedMimeType, extension: latest.file.extension,
+          size: inspection.size, sha256: inspection.sha256,
+        },
+        securityScan: {
+          provider: scan.provider, engineVersion: scan.engineVersion || null,
+          status: 'clean', scannedAt: scan.scannedAt,
+          threatName: null, resultCode: scan.resultCode || null,
+        },
+        integrity: null, integrityStatus: integrityService ? 'valid' : 'unavailable',
+        duplicate, createdBy: uid, createdAt: timestamp, activatedAt: timestamp,
+        supersededAt: null,
+      }
+      if (integrityService) {
+        baseVersion.integrity = integrityService.sign(baseVersion, { signedAt: timestamp, signedBy: uid })
+      }
+      transaction.create(`${documentPath}/versions/${versionId}`,
+        documentVersionSchema.parse(baseVersion))
     }
     const action =
       scan.status === 'clean'
@@ -489,7 +539,10 @@ export async function requestDocumentDownload({ uid, payload, repository, now = 
     throw workflowError('NOT_FOUND', 'Documento não encontrado.')
   }
 
-  if (document.status !== 'available' || document.file?.scanStatus !== 'clean') {
+  if (
+    document.status !== 'available' || document.file?.scanStatus !== 'clean' ||
+    document.integrityBlocked === true
+  ) {
     await repository.runTransaction(async (transaction) => {
       createAudit(transaction, repository, {
         uid,

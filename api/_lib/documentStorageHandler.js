@@ -17,6 +17,9 @@ function httpStatus(error) {
     INVALID_LINK: 422,
     UNSUPPORTED_SCHEMA: 422,
     FILE_BLOCKED: 422,
+    INTEGRITY_FAILED: 422,
+    INTEGRITY_KEY_UNAVAILABLE: 503,
+    LEGAL_HOLD: 409,
     INTERNAL: 500,
   }[error?.code] || 400
 }
@@ -26,6 +29,7 @@ export function createDocumentStorageHandler({
   repository,
   operation,
   scanner = null,
+  integrityService = null,
   method = 'POST',
   successStatus = 200,
 }) {
@@ -65,6 +69,7 @@ export function createDocumentStorageHandler({
         documentId: request.query?.documentId,
         repository,
         scanner,
+        integrityService,
       })
       return response.status(result.replayed ? 200 : successStatus).json(result)
     } catch (error) {

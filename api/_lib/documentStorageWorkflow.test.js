@@ -7,6 +7,7 @@ import {
   requestDocumentUpload,
 } from './documentStorageWorkflow.js'
 import { MockMalwareScanner } from './malwareScanner.js'
+import { createDocumentIntegrityService } from './documentIntegrityService.js'
 
 const pdf = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF')
 
@@ -244,6 +245,9 @@ describe('document storage workflow', () => {
       payload: finalizePayload(upload),
       repository,
       scanner: new MockMalwareScanner({ status: 'clean' }),
+      integrityService: createDocumentIntegrityService({
+        DOCUMENT_INTEGRITY_HMAC_KEY: '0123456789abcdef0123456789abcdef',
+      }),
     })
     const available = repository.data.get(path)
 
@@ -252,6 +256,8 @@ describe('document storage workflow', () => {
     expect(available.file.storagePath).toContain('/available/')
     expect(repository.objects.has(document.file.storagePath)).toBe(false)
     expect(repository.data.has(`${path}/versions/${available.currentVersionId}`)).toBe(true)
+    expect(repository.data.get(`${path}/versions/${available.currentVersionId}`))
+      .toMatchObject({ versionNumber: 1, status: 'current', integrityStatus: 'valid' })
     expect(auditActions(repository)).toEqual([
       'document_upload_requested',
       'document_upload_completed',

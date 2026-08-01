@@ -47,4 +47,8 @@ O nome original não participa do caminho. IDs e nomes são gerados no backend, 
 | `audio/wav` | `wav` | 50 MB |
 | `video/mp4` | `mp4` | 200 MB |
 
+## Atualização da Etapa 6C
+
+`patients/{patientId}/documents/{documentId}/versions/{versionId}` agora contém sequência, predecessor, motivo, metadados do arquivo, scan, duplicidade e assinatura HMAC. O documento principal mantém ponteiro corrente, totais, retenção e legal hold. Versões técnicas anteriores são compatíveis em leitura e não são migradas implicitamente.
+
 A fonte única é `src/config/documentStorage.js`.

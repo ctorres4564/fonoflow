@@ -185,6 +185,18 @@ export async function createAttachmentDraft({ uid, payload, repository }) {
       sensitivityLevel: config.defaultSensitivityLevel,
       accessLevel: config.defaultAccessLevel,
       currentVersionId: null,
+      currentVersionNumber: null,
+      totalVersions: 0,
+      lastVersionCreatedAt: null,
+      retentionPolicyId: null,
+      retentionStatus: 'not_applicable',
+      retentionUntil: null,
+      retentionReviewAt: null,
+      legalHold: false,
+      legalHoldReason: null,
+      legalHoldAt: null,
+      legalHoldBy: null,
+      integrityBlocked: false,
       file: null,
       attachmentFinalizedAt: null,
       archivedBy: null,
@@ -325,7 +337,7 @@ function persistLinks(transaction, repository, { uid, input, document }) {
   }
 }
 
-export async function finalizeAttachment({ uid, payload, repository, scanner }) {
+export async function finalizeAttachment({ uid, payload, repository, scanner, integrityService = null }) {
   const input = parseFinalizeClinicalAttachment(payload)
   const operationPath = `clinicalAttachmentOperations/${input.requestId}`
   const documentPath = `patients/${input.patientId}/documents/${input.documentId}`
@@ -367,7 +379,9 @@ export async function finalizeAttachment({ uid, payload, repository, scanner }) 
       updatedAt: repository.timestamp(),
     })
   })
-  const storageResult = await finalizeDocumentUpload({ uid, payload: input, repository, scanner })
+  const storageResult = await finalizeDocumentUpload({
+    uid, payload: input, repository, scanner, integrityService,
+  })
   const result = {
     documentId: input.documentId,
     status: storageResult.status,
@@ -452,6 +466,13 @@ function sanitizeAttachment(id, value) {
       : value.createdAt || null,
     archivedAt: value.archivedAt || null,
     archiveReason: value.archiveReason || null,
+    currentVersionId: value.currentVersionId || null,
+    currentVersionNumber: value.currentVersionNumber || (value.currentVersionId ? 1 : null),
+    totalVersions: value.totalVersions || (value.currentVersionId ? 1 : 0),
+    legalHold: value.legalHold === true,
+    legalHoldReason: value.legalHoldReason || null,
+    retentionStatus: value.retentionStatus || 'not_applicable',
+    integrityBlocked: value.integrityBlocked === true,
   }
 }
 
@@ -576,6 +597,9 @@ export async function archiveAttachment({ uid, payload, repository }) {
     if (!document || document.ownerId !== uid) throw attachmentError('NOT_FOUND', 'Anexo não encontrado.')
     if (document.status === 'archived') {
       throw attachmentError('CONFLICT', 'Anexo já está arquivado.')
+    }
+    if (document.legalHold === true) {
+      throw attachmentError('LEGAL_HOLD', 'Anexo sob legal hold não pode ser arquivado.')
     }
     if (['draft', 'pending_upload', 'uploaded_to_quarantine', 'scanning'].includes(document.status)) {
       throw attachmentError('CONFLICT', 'Anexo em processamento não pode ser arquivado.')

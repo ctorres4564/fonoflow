@@ -704,3 +704,41 @@ describe('clinical attachment references', () => {
     await assertFails(setDoc(operationRef, { kind: 'archive' }))
   })
 })
+
+describe('document versioning, integrity and retention', () => {
+  beforeEach(async () => {
+    await seed('patients/version-patient', { userId: 'professional-a', name: 'Paciente fictício' })
+    await seed('patients/version-patient/documents/document-a', {
+      schemaVersion: 2, patientId: 'version-patient', ownerId: 'professional-a', status: 'available',
+    })
+    await seed('patients/version-patient/documents/document-a/versions/version-a', {
+      schemaVersion: 2, patientId: 'version-patient', documentId: 'document-a',
+      ownerId: 'professional-a', versionNumber: 1, status: 'current',
+    })
+    await seed('patients/version-patient/documents/document-a/versions/version-a/integrityChecks/check-a', {
+      valid: true, checkedBy: 'professional-a',
+    })
+  })
+
+  it('permite ao proprietário ler versões e verificações de integridade', async () => {
+    const db = firestoreFor('professional-a')
+    await assertSucceeds(getDoc(doc(db, 'patients/version-patient/documents/document-a/versions/version-a')))
+    await assertSucceeds(getDoc(doc(db, 'patients/version-patient/documents/document-a/versions/version-a/integrityChecks/check-a')))
+  })
+
+  it('nega leitura por terceiro e qualquer mutação direta de versão', async () => {
+    const versionRef = doc(firestoreFor('professional-a'), 'patients/version-patient/documents/document-a/versions/version-a')
+    await assertFails(getDoc(doc(firestoreFor('professional-b'), 'patients/version-patient/documents/document-a/versions/version-a')))
+    await assertFails(updateDoc(versionRef, { status: 'superseded' }))
+    await assertFails(deleteDoc(versionRef))
+    await assertFails(setDoc(doc(firestoreFor('professional-a'), 'patients/version-patient/documents/document-a/versions/version-b'), { status: 'draft' }))
+  })
+
+  it('protege operações idempotentes e políticas de retenção', async () => {
+    const db = firestoreFor('professional-a')
+    await assertFails(getDoc(doc(db, 'documentVersionOperations/request-a')))
+    await assertFails(setDoc(doc(db, 'documentVersionOperations/request-a'), { kind: 'restore' }))
+    await assertFails(getDoc(doc(db, 'retentionPolicies/clinical-ten-years')))
+    await assertFails(setDoc(doc(db, 'retentionPolicies/clinical-ten-years'), { durationDays: 3650 }))
+  })
+})

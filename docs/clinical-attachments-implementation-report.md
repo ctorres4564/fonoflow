@@ -48,3 +48,7 @@ As suítes finais totalizam 399 verificações aprovadas: 331 principais, 59 de 
 Não foram implementados versionamento completo, retenção, descarte/restauração, preview, OCR, assinatura, compartilhamento, relatórios ou IA. O profissional relacionado fica restrito ao proprietário enquanto não houver autorização organizacional granular. O download temporário não é de uso único forte.
 
 Nenhuma implantação, migração ou gravação em produção foi realizada. A Etapa 6C não foi iniciada.
+
+## Atualização posterior — Etapa 6C
+
+A Etapa 6C foi implementada localmente: anexos clínicos agora expõem histórico, integridade, restauração controlada, retenção e legal hold. Consentimento e vínculos da 6B são revalidados antes de novas versões; o arquivo histórico nunca é substituído. As limitações acima permanecem como registro histórico do encerramento da 6B.

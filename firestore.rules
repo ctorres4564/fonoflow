@@ -165,8 +165,15 @@ service cloud.firestore {
         }
 
         match /versions/{versionId} {
-          allow read: if false;
+          // Conteúdo e metadados são legíveis pelo proprietário; qualquer
+          // mutação, inclusive troca de status e assinatura, é backend-only.
+          allow read: if isPatientOwner(patientId);
           allow create, update, delete: if false;
+
+          match /integrityChecks/{checkId} {
+            allow read: if isPatientOwner(patientId);
+            allow create, update, delete: if false;
+          }
         }
       }
 
@@ -244,6 +251,14 @@ service cloud.firestore {
     }
 
     match /clinicalAttachmentOperations/{requestId} {
+      allow read, write: if false;
+    }
+
+    match /documentVersionOperations/{requestId} {
+      allow read, write: if false;
+    }
+
+    match /retentionPolicies/{policyId} {
       allow read, write: if false;
     }
 

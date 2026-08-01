@@ -24,4 +24,8 @@ Nenhum caminho é informado pelo cliente. Repetir o mesmo `requestId` e payload 
 
 ## Consulta técnica
 
+## Atualização da Etapa 6C
+
+A finalização limpa cria a versão 1 assinada. Substituições usam quarentena própria, número sequencial reservado e ativação transacional, preservando a corrente em qualquer falha. Consulte `document-versioning.md`.
+
 `GET /api/documents/:documentId/status` retorna somente estado, estado do scan e disponibilidade. `POST /api/documents/list` fornece à interface uma lista sanitizada, sem caminhos, hashes, URLs ou detalhes do antivírus.
