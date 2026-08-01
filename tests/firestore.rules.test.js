@@ -134,15 +134,24 @@ describe('audit logs', () => {
 describe('documents subcollection', () => {
   beforeEach(async () => {
     await seed('patients/patient-a', { name: 'Paciente A', userId: 'professional-a' })
+    await seed('patients/patient-a/documents/doc-1', {
+      schemaVersion: 2,
+      ownerId: 'professional-a',
+      status: 'available',
+    })
+    await seed('patients/patient-a/documents/doc-1/securityScans/scan-1', { status: 'clean' })
   })
 
   it('permite que o proprietário do paciente crie, leia e exclua documentos dele', async () => {
     const db = firestoreFor('professional-a')
     const docRef = doc(db, 'patients/patient-a/documents/doc-1')
 
-    await assertSucceeds(setDoc(docRef, { name: 'laudo.pdf', url: 'https://example.com' }))
     await assertSucceeds(getDoc(docRef))
-    await assertSucceeds(deleteDoc(docRef))
+    await assertFails(getDoc(doc(db, 'patients/patient-a/documents/doc-1/securityScans/scan-1')))
+    await assertFails(setDoc(doc(db, 'patients/patient-a/documents/doc-2'), { ownerId: 'professional-a' }))
+    await assertFails(updateDoc(docRef, { status: 'available' }))
+    await assertFails(deleteDoc(docRef))
+    await assertFails(setDoc(doc(db, 'patients/patient-a/documents/doc-1/securityScans/scan-2'), { status: 'clean' }))
   })
 
   it('impede que outro profissional leia ou escreva documentos no paciente', async () => {

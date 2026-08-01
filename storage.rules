@@ -1,0 +1,10 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // O cliente nunca acessa objetos diretamente. Uploads e downloads usam
+    // URLs V4 curtas, assinadas pelo backend apos autorizacao e auditoria.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

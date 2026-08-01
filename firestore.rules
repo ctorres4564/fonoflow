@@ -149,8 +149,20 @@ service cloud.firestore {
       }
 
       match /documents/{documentId} {
-        allow read, write: if request.auth != null &&
-          get(/databases/$(database)/documents/patients/$(patientId)).data.userId == request.auth.uid;
+        // O proprietario pode ler o registro documental. A interface usa a
+        // API sanitizada; scans, versoes e todas as mutacoes ficam no backend.
+        allow read: if isPatientOwner(patientId);
+        allow create, update, delete: if false;
+
+        match /securityScans/{scanId} {
+          allow read: if false;
+          allow create, update, delete: if false;
+        }
+
+        match /versions/{versionId} {
+          allow read: if false;
+          allow create, update, delete: if false;
+        }
       }
 
       match /consents/{consentId} {
@@ -207,6 +219,10 @@ service cloud.firestore {
     }
 
     match /consentOperations/{requestId} {
+      allow read, write: if false;
+    }
+
+    match /documentStorageOperations/{requestId} {
       allow read, write: if false;
     }
 

@@ -1,0 +1,3 @@
+import { authenticateDocumentRequest,createDocumentStorageRepository } from '../_lib/documentStorageFirebase.js';import { createDocumentStorageHandler } from '../_lib/documentStorageHandler.js';import { finalizeDocumentUpload } from '../_lib/documentStorageWorkflow.js';import { createMalwareScanner } from '../_lib/malwareScanner.js'
+const scanner=createMalwareScanner(process.env)
+export default createDocumentStorageHandler({authenticate:authenticateDocumentRequest,repository:createDocumentStorageRepository(),operation:finalizeDocumentUpload,scanner,successStatus:200})
