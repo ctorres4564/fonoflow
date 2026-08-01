@@ -640,3 +640,10 @@ describe('backend-only collections', () => {
     await assertFails(deleteDoc(reviewRef))
   })
 })
+
+describe('consentimentos LGPD', () => {
+  beforeEach(async()=>{await seed('patients/patient-consent',{userId:'professional-a',name:'Paciente fictício'});await seed('patients/patient-consent/consents/consent-1',{schemaVersion:2,patientId:'patient-consent',userId:'professional-a',active:true,revoked:false})})
+  it('permite leitura apenas pelo proprietário',async()=>{await assertSucceeds(getDoc(doc(firestoreFor('professional-a'),'patients/patient-consent/consents/consent-1')));await assertFails(getDoc(doc(firestoreFor('professional-b'),'patients/patient-consent/consents/consent-1')));await assertFails(getDoc(doc(testEnv.unauthenticatedContext().firestore(),'patients/patient-consent/consents/consent-1')))})
+  it('bloqueia aceite, alteração, revogação e exclusão diretos pelo cliente',async()=>{const ref=doc(firestoreFor('professional-a'),'patients/patient-consent/consents/consent-1');await assertFails(setDoc(doc(firestoreFor('professional-a'),'patients/patient-consent/consents/consent-2'),{schemaVersion:2}));await assertFails(updateDoc(ref,{revoked:true,active:false}));await assertFails(deleteDoc(ref))})
+  it('protege registros de idempotência',async()=>{const ref=doc(firestoreFor('professional-a'),'consentOperations/request-1');await assertFails(getDoc(ref));await assertFails(setDoc(ref,{uid:'professional-a'}))})
+})

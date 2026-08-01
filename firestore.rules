@@ -152,6 +152,11 @@ service cloud.firestore {
         allow read, write: if request.auth != null &&
           get(/databases/$(database)/documents/patients/$(patientId)).data.userId == request.auth.uid;
       }
+
+      match /consents/{consentId} {
+        allow read: if isPatientOwner(patientId);
+        allow create, update, delete: if false;
+      }
     }
 
     match /schedules/{scheduleId} {
@@ -198,6 +203,10 @@ service cloud.firestore {
     }
 
     match /evolutionFinalizeRateLimits/{identifier} {
+      allow read, write: if false;
+    }
+
+    match /consentOperations/{requestId} {
       allow read, write: if false;
     }
 

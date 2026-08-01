@@ -2,6 +2,8 @@
 
 > O registro operacional domiciliar está em `schedules/{appointmentId}/homeCareVisit/current` e é detalhado em `docs/home-care-data-model.md`. Ele não substitui o agendamento nem a evolução clínica.
 
+> Consentimentos versionados são armazenados em `patients/{patientId}/consents/{consentId}`. O modelo, versionamento e compatibilidade legada estão em `docs/consents-data-model.md`.
+
 ## Versões
 
 A ausência de `schemaVersion` identifica documentos V1. Novas entidades principais usam `schemaVersion: 2`. Versões futuras são recusadas pelos normalizadores com `SchemaNormalizationError`; uma leitura nunca persiste a conversão.

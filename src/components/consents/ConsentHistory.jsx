@@ -1,0 +1,2 @@
+import ConsentCard from './ConsentCard'
+export default function ConsentHistory({consents,onDetails,onRevoke}){if(!consents.length)return <div className="rounded-xl border border-dashed p-6 text-center text-sm text-noble-500">Nenhum consentimento registrado.</div>;return <div className="grid gap-3 lg:grid-cols-2">{consents.map((consent)=><ConsentCard key={consent.id} consent={consent} onDetails={onDetails} onRevoke={onRevoke}/>)}</div>}

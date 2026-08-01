@@ -15,6 +15,7 @@ import RichContentRenderer from './RichContentRenderer'
 import { objectiveStatuses, subscribeTherapeuticPlan } from '../../services/therapeuticPlanService'
 import { useAuth } from '../../contexts/useAuth'
 import { finalizeEvolutionWithQualityReview } from '../../services/evolutionFinalizeService'
+import ConsentsTab from '../consents/ConsentsTab'
 
 const initialValues = {
   date: new Date().toISOString().split('T')[0],
@@ -927,6 +928,17 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
           >
             Documentos e Anexos
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('consents')}
+            className={`pb-3 text-sm font-bold border-b-2 px-4 transition-colors ${
+              activeTab === 'consents'
+                ? 'border-plum-600 text-plum-600 dark:text-plum-400'
+                : 'border-transparent text-noble-500 dark:text-noble-400 hover:text-noble-700 dark:hover:text-noble-200'
+            }`}
+          >
+            Consentimentos
+          </button>
         </div>
 
         {activeTab === 'evolutions' && (
@@ -1379,6 +1391,11 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
         {activeTab === 'documents' && (
           <div className="flex-1 overflow-y-auto">
             <DocumentsTab patient={patient} />
+          </div>
+        )}
+        {activeTab === 'consents' && (
+          <div className="flex-1 overflow-y-auto">
+            <ConsentsTab patient={patient} />
           </div>
         )}
       </div>

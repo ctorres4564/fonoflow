@@ -1,0 +1,2 @@
+const date=(value)=>new Date(value?.toDate?.()||value).toLocaleString('pt-BR')
+export default function ConsentTimeline({consent}){return <ol className="mt-4 border-l-2 border-indigo-200 pl-4 text-sm"><li><strong>Aceite registrado</strong><p className="text-noble-500">{date(consent.acceptedAt)} · {consent.acceptedMethod}</p></li>{consent.revoked&&<li className="mt-4"><strong>Consentimento revogado</strong><p className="text-noble-500">{date(consent.revokedAt)} · {consent.revokedReason}</p></li>}</ol>}

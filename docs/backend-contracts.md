@@ -4,6 +4,16 @@
 
 `POST /api/audit` aceita os eventos `HOME_CARE_VISIT_CREATED`, `HOME_CARE_DEPARTURE_RECORDED`, `HOME_CARE_ARRIVAL_RECORDED`, `HOME_CARE_SERVICE_STARTED`, `HOME_CARE_VISIT_COMPLETED`, `HOME_CARE_PATIENT_ABSENT`, `HOME_CARE_VISIT_CANCELLED`, `HOME_CARE_OCCURRENCE_RECORDED` e `HOME_CARE_TRAVEL_UPDATED`. O backend deriva o ator do token, valida a propriedade do paciente e não aceita endereço completo, localização precisa ou conteúdo clínico.
 
+## Consentimentos e LGPD
+
+| Rota | Operação | Escrita | Idempotência | Auditoria |
+|---|---|---|---|---|
+| `POST /api/consents/register` | Registra uma versão aceita | Backend transacional | `requestId` | `consent.registered` |
+| `POST /api/consents/revoke` | Revoga sem excluir | Backend transacional | `requestId` | `consent.revoked` |
+| `POST /api/consents/validate` | Verifica a maior versão ativa | Somente auditoria | `requestId` | `consent.validated` |
+
+As três rotas exigem Bearer Firebase, validam payload estrito com Zod e confirmam que o ator é proprietário do paciente. Identidade, timestamps e organização não são confiados ao frontend.
+
 | Rota | AutenticaÃ§Ã£o | Schema de entrada | Campos protegidos | OperaÃ§Ã£o idempotente | Auditoria |
 |---|---|---|---|---|---|
 | `POST /api/evolutions/finalize` | Bearer Firebase | contrato estrito + `parseEvolutionFinalize` | ator, autoria e timestamps derivados | sim, `Idempotency-Key` UUID | mesma transaÃ§Ã£o, sem conteÃºdo integral |
