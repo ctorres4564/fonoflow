@@ -44,6 +44,18 @@ afterAll(async () => {
 })
 
 describe('patients', () => {
+  const patientV2 = (overrides = {}) => ({
+    schemaVersion: 2, userId: 'professional-a', status: 'active',
+    personalData: { fullName: 'Paciente V2' }, homeCare: { enabled: true },
+    ...overrides,
+  })
+
+  it('aceita paciente V2 válido e rejeita campos críticos inválidos', async () => {
+    const db = firestoreFor('professional-a')
+    await assertSucceeds(setDoc(doc(db, 'patients', 'patient-v2'), patientV2()))
+    await assertFails(setDoc(doc(db, 'patients', 'patient-invalid'), patientV2({ personalData: { fullName: '' } })))
+    await assertFails(setDoc(doc(db, 'patients', 'patient-future'), patientV2({ schemaVersion: 3 })))
+  })
   it('permite criar e ler o próprio paciente', async () => {
     const db = firestoreFor('professional-a')
     const patientRef = doc(db, 'patients', 'patient-a')
@@ -73,6 +85,120 @@ describe('patients', () => {
 
     await assertFails(getDoc(doc(anonymousDb, 'patients', 'patient-a')))
   })
+
+  it('impede o proprietário de excluir o próprio paciente', async () => {
+    await seed('patients/patient-a', { name: 'Paciente A', userId: 'professional-a' })
+    const ownerDb = firestoreFor('professional-a')
+
+    await assertFails(deleteDoc(doc(ownerDb, 'patients', 'patient-a')))
+  })
+
+  it('impede outro usuário de excluir o paciente', async () => {
+    await seed('patients/patient-a', { name: 'Paciente A', userId: 'professional-a' })
+    const otherDb = firestoreFor('professional-b')
+
+    await assertFails(deleteDoc(doc(otherDb, 'patients', 'patient-a')))
+  })
+})
+
+describe('proteção de status do paciente', () => {
+  const seedStatusPatient = () => seed('patients/patient-status', {
+    schemaVersion: 2, userId: 'professional-a', status: 'active',
+    personalData: { fullName: 'Paciente Status' }, homeCare: { enabled: true },
+  })
+
+  it('impede o cliente de alterar status diretamente', async () => {
+    await seedStatusPatient()
+    const db = firestoreFor('professional-a')
+    await assertFails(updateDoc(doc(db, 'patients', 'patient-status'), { status: 'inactive' }))
+  })
+
+  it('impede o cliente de alterar statusReason diretamente', async () => {
+    await seedStatusPatient()
+    const db = firestoreFor('professional-a')
+    await assertFails(updateDoc(doc(db, 'patients', 'patient-status'), { statusReason: 'Motivo forjado' }))
+  })
+
+  it('impede o cliente de alterar statusChangedAt diretamente', async () => {
+    await seedStatusPatient()
+    const db = firestoreFor('professional-a')
+    await assertFails(updateDoc(doc(db, 'patients', 'patient-status'), { statusChangedAt: '2026-08-01T00:00:00.000Z' }))
+  })
+
+  it('impede o cliente de alterar statusChangedBy diretamente', async () => {
+    await seedStatusPatient()
+    const db = firestoreFor('professional-a')
+    await assertFails(updateDoc(doc(db, 'patients', 'patient-status'), { statusChangedBy: 'professional-a' }))
+  })
+
+  it('permite atualizações cadastrais legítimas sem tocar nos campos de status', async () => {
+    await seedStatusPatient()
+    const db = firestoreFor('professional-a')
+    await assertSucceeds(updateDoc(doc(db, 'patients', 'patient-status'), {
+      personalData: { fullName: 'Nome Atualizado' },
+    }))
+  })
+
+  it('impede leitura e escrita em patientStatusOperations pelo cliente', async () => {
+    const db = firestoreFor('professional-a')
+    const opRef = doc(db, 'patientStatusOperations/request-1')
+    await assertFails(getDoc(opRef))
+    await assertFails(setDoc(opRef, { patientId: 'patient-status', actorId: 'professional-a' }))
+  })
+
+  it('impede leitura e escrita em evolutionCreateOperations pelo cliente', async () => {
+    const db = firestoreFor('professional-a')
+    const opRef = doc(db, 'evolutionCreateOperations/request-1')
+    await assertFails(getDoc(opRef))
+    await assertFails(setDoc(opRef, { patientId: 'patient-status', uid: 'professional-a' }))
+  })
+})
+
+describe('schedule V2', () => {
+  it('aceita contrato válido e rejeita débito sem estrutura protegida', async () => {
+    const db = firestoreFor('professional-a')
+    const base = { schemaVersion:2,userId:'professional-a',patientId:'patient-a',serviceType:'home_care',status:'scheduled',sessionAccounting:{deductSession:false} }
+    await assertSucceeds(setDoc(doc(db,'schedules','v2-ok'),base))
+    await assertFails(setDoc(doc(db,'schedules','v2-invalid'),{...base,sessionAccounting:{deductSession:'yes'}}))
+  })
+})
+
+describe('exclusão de agendamentos', () => {
+  beforeEach(async () => {
+    await seed('schedules/schedule-delete', { schemaVersion: 2, userId: 'professional-a', patientId: 'patient-a', serviceType: 'clinic', status: 'scheduled', sessionAccounting: { deductSession: false } })
+  })
+
+  it('impede o proprietário de excluir o próprio agendamento', async () => {
+    const db = firestoreFor('professional-a')
+    await assertFails(deleteDoc(doc(db, 'schedules', 'schedule-delete')))
+  })
+
+  it('impede outro usuário de excluir o agendamento', async () => {
+    const db = firestoreFor('professional-b')
+    await assertFails(deleteDoc(doc(db, 'schedules', 'schedule-delete')))
+  })
+})
+
+describe('home care visit', () => {
+  const schedule = { schemaVersion:2,userId:'professional-a',patientId:'patient-a',serviceType:'home_care',status:'scheduled',sessionAccounting:{deductSession:false} }
+  const visit = (overrides={}) => ({ schemaVersion:1,appointmentId:'schedule-a',patientId:'patient-a',professionalId:'professional-a',userId:'professional-a',status:'planned',location:{addressSnapshot:{}},schedule:{scheduledStart:'start',scheduledEnd:'end'},travel:{},service:{},occurrence:{type:'none',description:null},createdAt:'now',createdBy:'professional-a',updatedAt:null,updatedBy:null,...overrides })
+  beforeEach(async () => { await seed('schedules/schedule-a', schedule) })
+  it('permite ao proprietário criar, ler e avançar a visita', async () => {
+    const db=firestoreFor('professional-a'); const ref=doc(db,'schedules/schedule-a/homeCareVisit/current')
+    await assertSucceeds(setDoc(ref,visit())); await assertSucceeds(getDoc(ref)); await assertSucceeds(updateDoc(ref,{status:'in_transit'}))
+  })
+  it('rejeita outro usuário e userId forjado', async () => {
+    const other=firestoreFor('professional-b'); await assertFails(setDoc(doc(other,'schedules/schedule-a/homeCareVisit/current'),visit({userId:'professional-b',professionalId:'professional-b'})))
+    const owner=firestoreFor('professional-a'); await assertFails(setDoc(doc(owner,'schedules/schedule-a/homeCareVisit/current'),visit({userId:'forged'})))
+  })
+  it('rejeita transição inválida, alteração terminal e exclusão', async () => {
+    await seed('schedules/schedule-a/homeCareVisit/current',visit({status:'completed'})); const db=firestoreFor('professional-a'); const ref=doc(db,'schedules/schedule-a/homeCareVisit/current')
+    await assertFails(updateDoc(ref,{status:'arrived'})); await assertFails(deleteDoc(ref))
+  })
+  it('protege identificadores e histórico operacional', async () => {
+    await seed('schedules/schedule-a/homeCareVisit/current',visit()); const db=firestoreFor('professional-a'); const ref=doc(db,'schedules/schedule-a/homeCareVisit/current')
+    await assertFails(updateDoc(ref,{patientId:'other'})); await assertFails(updateDoc(ref,{appointmentId:'other'}))
+  })
 })
 
 describe('audit logs', () => {
@@ -91,15 +217,24 @@ describe('audit logs', () => {
 describe('documents subcollection', () => {
   beforeEach(async () => {
     await seed('patients/patient-a', { name: 'Paciente A', userId: 'professional-a' })
+    await seed('patients/patient-a/documents/doc-1', {
+      schemaVersion: 2,
+      ownerId: 'professional-a',
+      status: 'available',
+    })
+    await seed('patients/patient-a/documents/doc-1/securityScans/scan-1', { status: 'clean' })
   })
 
   it('permite que o proprietário do paciente crie, leia e exclua documentos dele', async () => {
     const db = firestoreFor('professional-a')
     const docRef = doc(db, 'patients/patient-a/documents/doc-1')
 
-    await assertSucceeds(setDoc(docRef, { name: 'laudo.pdf', url: 'https://example.com' }))
     await assertSucceeds(getDoc(docRef))
-    await assertSucceeds(deleteDoc(docRef))
+    await assertFails(getDoc(doc(db, 'patients/patient-a/documents/doc-1/securityScans/scan-1')))
+    await assertFails(setDoc(doc(db, 'patients/patient-a/documents/doc-2'), { ownerId: 'professional-a' }))
+    await assertFails(updateDoc(docRef, { status: 'available' }))
+    await assertFails(deleteDoc(docRef))
+    await assertFails(setDoc(doc(db, 'patients/patient-a/documents/doc-1/securityScans/scan-2'), { status: 'clean' }))
   })
 
   it('impede que outro profissional leia ou escreva documentos no paciente', async () => {
@@ -220,6 +355,7 @@ describe('evolution annulment', () => {
     const evolutionRef = doc(db, 'patients/patient-a/evolutions/evolution-1')
 
     await assertSucceeds(updateDoc(evolutionRef, {
+      status: 'voided',
       voided: true,
       voidedAt: '2026-07-20T00:00:00.000Z',
       voidedBy: 'professional-a',
@@ -357,7 +493,7 @@ describe('schedule status history', () => {
   it('permite ao proprietário criar e ler eventos imutáveis de status', async () => {
     const db = firestoreFor('professional-a')
     const historyRef = doc(db, 'schedules/schedule-1/statusHistory/history-1')
-    await assertSucceeds(setDoc(historyRef, { previousStatus: 'Agendado', status: 'Confirmado' }))
+    await assertSucceeds(setDoc(historyRef, { previousStatus: 'scheduled', status: 'confirmed', actorId: 'professional-a', operationId: 'history-1' }))
     await assertSucceeds(getDoc(historyRef))
     await assertFails(updateDoc(historyRef, { status: 'Falta' }))
     await assertFails(deleteDoc(historyRef))
@@ -594,5 +730,98 @@ describe('backend-only collections', () => {
     const reviewRef = doc(db, 'patients/patient-a/evolutions/evolution-1/qualityReviews/revision-1')
     await assertFails(setDoc(reviewRef, { finalAlerts: [] }))
     await assertFails(deleteDoc(reviewRef))
+  })
+})
+
+describe('consentimentos LGPD', () => {
+  beforeEach(async()=>{await seed('patients/patient-consent',{userId:'professional-a',name:'Paciente fictício'});await seed('patients/patient-consent/consents/consent-1',{schemaVersion:2,patientId:'patient-consent',userId:'professional-a',active:true,revoked:false})})
+  it('permite leitura apenas pelo proprietário',async()=>{await assertSucceeds(getDoc(doc(firestoreFor('professional-a'),'patients/patient-consent/consents/consent-1')));await assertFails(getDoc(doc(firestoreFor('professional-b'),'patients/patient-consent/consents/consent-1')));await assertFails(getDoc(doc(testEnv.unauthenticatedContext().firestore(),'patients/patient-consent/consents/consent-1')))})
+  it('bloqueia aceite, alteração, revogação e exclusão diretos pelo cliente',async()=>{const ref=doc(firestoreFor('professional-a'),'patients/patient-consent/consents/consent-1');await assertFails(setDoc(doc(firestoreFor('professional-a'),'patients/patient-consent/consents/consent-2'),{schemaVersion:2}));await assertFails(updateDoc(ref,{revoked:true,active:false}));await assertFails(deleteDoc(ref))})
+  it('protege registros de idempotência',async()=>{const ref=doc(firestoreFor('professional-a'),'consentOperations/request-1');await assertFails(getDoc(ref));await assertFails(setDoc(ref,{uid:'professional-a'}))})
+})
+
+describe('clinical attachment references', () => {
+  beforeEach(async () => {
+    await seed('patients/attachment-patient', { userId: 'professional-a', name: 'Paciente ficticio' })
+    await seed('patients/attachment-patient/evolutions/evolution-a', {
+      patientId: 'attachment-patient', professionalId: 'professional-a', status: 'finalized',
+    })
+    await seed('patients/attachment-patient/evolutions/evolution-a/attachments/document-a', {
+      documentId: 'document-a', patientId: 'attachment-patient', linkedBy: 'professional-a',
+    })
+    await seed('schedules/attachment-schedule', {
+      patientId: 'attachment-patient', userId: 'professional-a', status: 'completed',
+    })
+    await seed('schedules/attachment-schedule/attachments/document-a', {
+      documentId: 'document-a', patientId: 'attachment-patient', linkedBy: 'professional-a',
+    })
+    await seed('schedules/attachment-schedule/homeCareVisit/current', {
+      patientId: 'attachment-patient', appointmentId: 'attachment-schedule', userId: 'professional-a',
+    })
+    await seed('schedules/attachment-schedule/homeCareVisit/current/attachments/document-a', {
+      documentId: 'document-a', patientId: 'attachment-patient', linkedBy: 'professional-a',
+    })
+  })
+
+  it('allows owner to read immutable evolution, appointment and home care references', async () => {
+    const db = firestoreFor('professional-a')
+    await assertSucceeds(getDoc(doc(db, 'patients/attachment-patient/evolutions/evolution-a/attachments/document-a')))
+    await assertSucceeds(getDoc(doc(db, 'schedules/attachment-schedule/attachments/document-a')))
+    await assertSucceeds(getDoc(doc(db, 'schedules/attachment-schedule/homeCareVisit/current/attachments/document-a')))
+  })
+
+  it('denies other users and all direct mutations', async () => {
+    const foreignDb = firestoreFor('professional-b')
+    const ownerDb = firestoreFor('professional-a')
+    const evolutionRef = doc(ownerDb, 'patients/attachment-patient/evolutions/evolution-a/attachments/document-a')
+    await assertFails(getDoc(doc(foreignDb, 'patients/attachment-patient/evolutions/evolution-a/attachments/document-a')))
+    await assertFails(updateDoc(evolutionRef, { linkedBy: 'professional-b' }))
+    await assertFails(deleteDoc(evolutionRef))
+    await assertFails(setDoc(doc(ownerDb, 'schedules/attachment-schedule/attachments/document-b'), { documentId: 'document-b' }))
+  })
+
+  it('protects attachment idempotency records from clients', async () => {
+    const db = firestoreFor('professional-a')
+    const operationRef = doc(db, 'clinicalAttachmentOperations/request-a')
+    await assertFails(getDoc(operationRef))
+    await assertFails(setDoc(operationRef, { kind: 'archive' }))
+  })
+})
+
+describe('document versioning, integrity and retention', () => {
+  beforeEach(async () => {
+    await seed('patients/version-patient', { userId: 'professional-a', name: 'Paciente fictício' })
+    await seed('patients/version-patient/documents/document-a', {
+      schemaVersion: 2, patientId: 'version-patient', ownerId: 'professional-a', status: 'available',
+    })
+    await seed('patients/version-patient/documents/document-a/versions/version-a', {
+      schemaVersion: 2, patientId: 'version-patient', documentId: 'document-a',
+      ownerId: 'professional-a', versionNumber: 1, status: 'current',
+    })
+    await seed('patients/version-patient/documents/document-a/versions/version-a/integrityChecks/check-a', {
+      valid: true, checkedBy: 'professional-a',
+    })
+  })
+
+  it('permite ao proprietário ler versões e verificações de integridade', async () => {
+    const db = firestoreFor('professional-a')
+    await assertSucceeds(getDoc(doc(db, 'patients/version-patient/documents/document-a/versions/version-a')))
+    await assertSucceeds(getDoc(doc(db, 'patients/version-patient/documents/document-a/versions/version-a/integrityChecks/check-a')))
+  })
+
+  it('nega leitura por terceiro e qualquer mutação direta de versão', async () => {
+    const versionRef = doc(firestoreFor('professional-a'), 'patients/version-patient/documents/document-a/versions/version-a')
+    await assertFails(getDoc(doc(firestoreFor('professional-b'), 'patients/version-patient/documents/document-a/versions/version-a')))
+    await assertFails(updateDoc(versionRef, { status: 'superseded' }))
+    await assertFails(deleteDoc(versionRef))
+    await assertFails(setDoc(doc(firestoreFor('professional-a'), 'patients/version-patient/documents/document-a/versions/version-b'), { status: 'draft' }))
+  })
+
+  it('protege operações idempotentes e políticas de retenção', async () => {
+    const db = firestoreFor('professional-a')
+    await assertFails(getDoc(doc(db, 'documentVersionOperations/request-a')))
+    await assertFails(setDoc(doc(db, 'documentVersionOperations/request-a'), { kind: 'restore' }))
+    await assertFails(getDoc(doc(db, 'retentionPolicies/clinical-ten-years')))
+    await assertFails(setDoc(doc(db, 'retentionPolicies/clinical-ten-years'), { durationDays: 3650 }))
   })
 })

@@ -14,6 +14,7 @@ const AgendaPage = lazy(() => import('../pages/AgendaPage'))
 const ReportPrintPage = lazy(() => import('../pages/ReportPrintPage'))
 const GuidePage = lazy(() => import('../pages/GuidePage'))
 const AuditPage = lazy(() => import('../pages/AuditPage'))
+const HomeCarePage = lazy(() => import('../pages/HomeCarePage'))
 
 function AppRouter() {
   return (
@@ -65,6 +66,7 @@ function AppRouter() {
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="pacientes" element={<PatientsPage />} />
         <Route path="agenda" element={<AgendaPage />} />
+        <Route path="home-care" element={<HomeCarePage />} />
         <Route path="guia" element={<GuidePage />} />
         <Route path="auditoria" element={<AuditPage />} />
       </Route>

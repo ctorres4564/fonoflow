@@ -3,7 +3,7 @@ import toast from 'react-hot-toast'
 import {
   subscribeDocuments,
   uploadDocument,
-  deleteDocument,
+  getSecureDocumentDownload,
 } from '../../services/documentService'
 
 function DocumentsTab({ patient }) {
@@ -89,10 +89,10 @@ function DocumentsTab({ patient }) {
   const handleFile = async (file) => {
     if (!file) return
 
-    // Validação de tamanho (limite 10MB)
-    const MAX_SIZE = 10 * 1024 * 1024
+    // Defesa de UX; os limites específicos e autoritativos ficam no backend.
+    const MAX_SIZE = 200 * 1024 * 1024
     if (file.size > MAX_SIZE) {
-      toast.error(`O arquivo excede o limite de 10MB. Tamanho do arquivo: ${formatBytes(file.size)}`)
+      toast.error(`O arquivo excede o limite máximo. Tamanho do arquivo: ${formatBytes(file.size)}`)
       return
     }
 
@@ -105,7 +105,7 @@ function DocumentsTab({ patient }) {
         setUploadProgress(progress)
       })
 
-      toast.success('Documento enviado com sucesso!')
+      toast.success('Documento processado pela verificação de segurança.')
     } catch (error) {
       console.error(error)
       toast.error('Ocorreu um erro ao fazer upload do documento.')
@@ -142,17 +142,13 @@ function DocumentsTab({ patient }) {
     handleFile(file)
   }
 
-  // Tratar exclusão do documento
-  const handleDeleteDoc = async (doc) => {
-    const confirmed = window.confirm(`Deseja realmente excluir o documento "${doc.name}"?`)
-    if (!confirmed) return
-
+  const handleDownload = async (document) => {
     try {
-      await deleteDocument(patient.id, doc.id, doc.storagePath)
-      toast.success('Documento excluído com sucesso.')
+      const result = await getSecureDocumentDownload(patient.id, document.id)
+      window.open(result.downloadUrl, '_blank', 'noopener,noreferrer')
     } catch (error) {
       console.error(error)
-      toast.error('Erro ao excluir documento.')
+      toast.error(error.message || 'Documento ainda não está liberado para download.')
     }
   }
 
@@ -161,7 +157,7 @@ function DocumentsTab({ patient }) {
       <div>
         <h4 className="mb-1 text-base font-bold text-noble-800 dark:text-noble-100">Documentos e Anexos</h4>
         <p className="text-xs text-noble-500 dark:text-noble-400">
-          Anexe laudos, exames, encaminhamentos ou relatórios nos formatos PDF, imagem, texto ou markdown.
+          Envie PDF, JPEG, PNG, MP3, WAV ou MP4. Todo arquivo passa por quarentena e verificação antes de ser liberado.
         </p>
       </div>
 
@@ -182,7 +178,7 @@ function DocumentsTab({ patient }) {
           ref={fileInputRef}
           onChange={handleFileInputChange}
           className="hidden"
-          accept=".pdf, .txt, .md, .png, .jpeg, .jpg, .gif, .webp, application/pdf, text/plain, text/markdown, image/*"
+          accept=".pdf,.png,.jpeg,.jpg,.mp3,.wav,.mp4,application/pdf,image/jpeg,image/png,audio/mpeg,audio/wav,video/mp4"
         />
 
         <div className="rounded-full bg-plum-50 dark:bg-plum-950/20 p-3 text-plum-600 dark:text-plum-400 mb-3">
@@ -195,7 +191,7 @@ function DocumentsTab({ patient }) {
           Arraste e solte o arquivo aqui, ou <span className="text-plum-600 dark:text-plum-400 underline">procure nos seus arquivos</span>
         </p>
         <p className="text-xs text-noble-500 dark:text-noble-400 mt-1">
-          Suporta PDF, TXT, MD e imagens de até 10MB
+          Limites: PDF 20MB, imagens 10MB, áudio 50MB e vídeo 200MB
         </p>
       </div>
 
@@ -236,21 +232,20 @@ function DocumentsTab({ patient }) {
                 <div className="flex items-center space-x-3 overflow-hidden">
                   {getFileIcon(doc.type, doc.name)}
                   <div className="overflow-hidden">
-                    <a
-                      href={doc.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <button
+                      type="button"
+                      onClick={() => handleDownload(doc)}
                       className="text-sm font-bold text-noble-800 dark:text-noble-100 hover:text-plum-600 dark:hover:text-plum-400 hover:underline truncate block"
                       title={doc.name}
                     >
                       {doc.name}
-                    </a>
+                    </button>
                     <div className="flex items-center space-x-2 text-[11px] text-noble-500 dark:text-noble-400 mt-0.5 font-medium">
                       <span>{formatBytes(doc.size)}</span>
                       <span>•</span>
                       <span>
-                        {doc.createdAt?.seconds
-                          ? new Date(doc.createdAt.seconds * 1000).toLocaleDateString('pt-BR')
+                        {doc.createdAt
+                          ? new Date(doc.createdAt).toLocaleDateString('pt-BR')
                           : 'Carregando...'}
                       </span>
                     </div>
@@ -258,25 +253,15 @@ function DocumentsTab({ patient }) {
                 </div>
 
                 <div className="flex items-center space-x-2 flex-shrink-0">
-                  <a
-                    href={doc.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => handleDownload(doc)}
+                    disabled={!doc.available}
                     className="p-1.5 rounded-lg text-noble-500 hover:text-noble-700 dark:text-noble-400 dark:hover:text-noble-200 hover:bg-noble-50 dark:hover:bg-noble-800 transition"
-                    title="Visualizar/Download"
+                    title={doc.available ? 'Download temporário' : `Indisponível: ${doc.status}`}
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                    </svg>
-                  </a>
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteDoc(doc)}
-                    className="p-1.5 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20 transition"
-                    title="Excluir documento"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>
                   </button>
                 </div>

@@ -6,6 +6,8 @@ import { getAnamnesis } from '../services/anamnesisService'
 import { getEvolutionAmendments } from '../services/patientService'
 import RichContentRenderer from '../components/patients/RichContentRenderer'
 import { branding } from '../config/branding'
+import { normalizePatientDocument } from '../mappers/patient.mapper'
+import { normalizeEvolutionDocument } from '../mappers/evolution.mapper'
 
 const anamnesisPrintFields = [
   ['interviewDate', 'Data da entrevista'], ['informant', 'Informante'],
@@ -107,7 +109,7 @@ function ReportPrintPage() {
           navigate('/pacientes')
           return
         }
-        setPatient({ id: patientDoc.id, ...patientDoc.data() })
+        setPatient(normalizePatientDocument({ id: patientDoc.id, ...patientDoc.data() }))
 
         const planSnapshot = await getDoc(doc(db, 'patients', id, 'therapeuticPlan', 'current'))
         setTherapeuticPlan(planSnapshot.exists() ? { id: planSnapshot.id, ...planSnapshot.data() } : null)
@@ -146,9 +148,8 @@ function ReportPrintPage() {
           orderBy('date', 'desc')
         )
         const evolutionsSnap = await getDocs(evolutionsQuery)
-        const evolutionsList = evolutionsSnap.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
+        const evolutionsList = evolutionsSnap.docs.map((doc) => normalizeEvolutionDocument({
+          id: doc.id, patientId: id, ...doc.data(),
         }))
         const selectedIds = new Set(selectedEvolutionIds)
         const filteredEvolutions = evolutionsList.filter((evolution) => {

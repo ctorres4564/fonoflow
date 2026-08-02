@@ -1,0 +1,2 @@
+import { authenticateDocumentRequest,createDocumentStorageRepository } from '../../_lib/documentStorageFirebase.js';import { createDocumentStorageHandler } from '../../_lib/documentStorageHandler.js';import { getDocumentStatus } from '../../_lib/documentStorageWorkflow.js'
+export default createDocumentStorageHandler({authenticate:authenticateDocumentRequest,repository:createDocumentStorageRepository(),operation:getDocumentStatus,method:'GET',successStatus:200})

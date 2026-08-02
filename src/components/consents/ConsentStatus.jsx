@@ -1,0 +1,1 @@
+export default function ConsentStatus({ consent }) { const active=consent.active&&!consent.revoked;return <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${active?'bg-emerald-100 text-emerald-800':'bg-red-100 text-red-800'}`}>{active?'Válido':'Revogado'}</span> }

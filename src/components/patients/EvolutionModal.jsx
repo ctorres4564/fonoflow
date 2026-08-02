@@ -8,13 +8,14 @@ import { askGemini } from '../../services/geminiService'
 import { buildSanitizedPrompt, minimizeClinicalText, sanitizeAiPlainText } from '../../utils/aiPrivacy'
 import { EMPTY_RICH_CONTENT, buildEvolutionCreatePayload, isRichContentEmpty, plainTextToRichContent, richContentToPlainText, sanitizeRichContent } from '../../utils/richContent'
 import AIConsentModal from './AIConsentModal'
-import DocumentsTab from './DocumentsTab'
+import ClinicalAttachmentsTab from '../clinicalAttachments/ClinicalAttachmentsTab'
 import TherapeuticPlanTab from './TherapeuticPlanTab'
 import RichTextEditor from './RichTextEditor'
 import RichContentRenderer from './RichContentRenderer'
 import { objectiveStatuses, subscribeTherapeuticPlan } from '../../services/therapeuticPlanService'
 import { useAuth } from '../../contexts/useAuth'
 import { finalizeEvolutionWithQualityReview } from '../../services/evolutionFinalizeService'
+import ConsentsTab from '../consents/ConsentsTab'
 
 const initialValues = {
   date: new Date().toISOString().split('T')[0],
@@ -467,7 +468,7 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
     try {
       const draftId = await saveEvolutionDraft(
         patient.id,
-        { ...formValues, notes: formValues.notes.trim() },
+        { ...formValues, notes: formValues.notes.trim(), professionalId: authorId },
         selectedDraftId,
       )
       setSelectedDraftId(draftId)
@@ -882,7 +883,7 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
           </div>
         </div>
 
-        <div className="mb-6 flex border-b border-noble-200 dark:border-noble-800">
+        <div className="mb-6 flex overflow-x-auto border-b border-noble-200 dark:border-noble-800">
           <button
             type="button"
             onClick={() => setActiveTab('evolutions')}
@@ -925,7 +926,18 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
                 : 'border-transparent text-noble-500 dark:text-noble-400 hover:text-noble-700 dark:hover:text-noble-200'
             }`}
           >
-            Documentos e Anexos
+            Documentos
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('consents')}
+            className={`pb-3 text-sm font-bold border-b-2 px-4 transition-colors ${
+              activeTab === 'consents'
+                ? 'border-plum-600 text-plum-600 dark:text-plum-400'
+                : 'border-transparent text-noble-500 dark:text-noble-400 hover:text-noble-700 dark:hover:text-noble-200'
+            }`}
+          >
+            Consentimentos
           </button>
         </div>
 
@@ -1378,7 +1390,12 @@ function EvolutionModal({ isOpen, onClose, patient, linkedSchedule = null, onSch
 
         {activeTab === 'documents' && (
           <div className="flex-1 overflow-y-auto">
-            <DocumentsTab patient={patient} />
+            <ClinicalAttachmentsTab patient={patient} />
+          </div>
+        )}
+        {activeTab === 'consents' && (
+          <div className="flex-1 overflow-y-auto">
+            <ConsentsTab patient={patient} />
           </div>
         )}
       </div>

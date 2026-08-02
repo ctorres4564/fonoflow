@@ -1,170 +1,254 @@
 import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  onSnapshot,
-  query,
-  runTransaction,
-  serverTimestamp,
-  updateDoc,
-  where,
+  addDoc, collection, doc, getDoc, onSnapshot, query,
+  runTransaction, serverTimestamp, updateDoc, where,
 } from 'firebase/firestore'
-import { db } from '../firebase/config'
+import { db, auth } from '../firebase/config'
+import { convertAppointmentV1ToV2, normalizeAppointmentDocument } from '../mappers/appointment.mapper'
+import {
+  parseAppointmentForCreate, parseAppointmentForUpdate,
+} from '../schemas/persistence.parsers'
+import {
+  appointmentStatusToV2, assertAppointmentTransition,
+} from '../domain/appointments/appointmentTransitions'
+import { buildVisitTransitionUpdate } from '../domain/homeCare/homeCareVisitTransitions'
 
 const schedulesCollection = collection(db, 'schedules')
 
 export function subscribeSchedules(userId, callback, onError) {
-  const q = query(schedulesCollection, where('userId', '==', userId))
-
-  return onSnapshot(
-    q,
-    (snapshot) => {
-      const schedules = snapshot.docs
-        .map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }))
-        .sort((a, b) => {
-          // Ordenar por data e horário de início
-          const dateTimeA = `${a.date || ''}T${a.startTime || ''}`
-          const dateTimeB = `${b.date || ''}T${b.startTime || ''}`
-          return dateTimeA.localeCompare(dateTimeB)
-        })
-      callback(schedules)
-    },
-    onError,
-  )
+  const schedulesQuery = query(schedulesCollection, where('userId', '==', userId))
+  return onSnapshot(schedulesQuery, (snapshot) => {
+    const schedules = snapshot.docs
+      .map((item) => normalizeAppointmentDocument({ id: item.id, ...item.data() }))
+      .sort((a, b) => `${a.date}T${a.startTime}`.localeCompare(`${b.date}T${b.startTime}`))
+    callback(schedules)
+  }, onError)
 }
 
 export function createSchedule(payload) {
+  const timestamp = serverTimestamp()
+  const candidate = convertAppointmentV1ToV2({
+    ...payload,
+    serviceType: payload.serviceType || 'home_care',
+    scheduledStart: new Date(`${payload.date}T${payload.startTime}:00`),
+    scheduledEnd: new Date(`${payload.date}T${payload.endTime}:00`),
+    sessionAccounting: { deductSession: false, deductedAt: null, deductionOperationId: null },
+    createdAt: timestamp,
+    createdBy: payload.userId,
+  })
   return addDoc(schedulesCollection, {
-    ...payload,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+    ...parseAppointmentForCreate(candidate, payload.userId, timestamp),
+    updatedAt: timestamp,
   })
 }
 
-export function updateSchedule(scheduleId, payload) {
-  return updateDoc(doc(db, 'schedules', scheduleId), {
-    ...payload,
-    updatedAt: serverTimestamp(),
-  })
-}
-
-export function removeSchedule(scheduleId) {
-  return deleteDoc(doc(db, 'schedules', scheduleId))
-}
-
-export async function changeScheduleStatus(scheduleId, patientId, { status, reason = '', deductSession = false }) {
+export async function updateSchedule(scheduleId, payload) {
   const scheduleRef = doc(db, 'schedules', scheduleId)
-  const patientRef = doc(db, 'patients', patientId)
-  const historyRef = doc(collection(scheduleRef, 'statusHistory'))
+  const snapshot = await getDoc(scheduleRef)
+  if (!snapshot.exists()) throw new Error('Agendamento não encontrado.')
+  const current = convertAppointmentV1ToV2(snapshot.data())
+  const candidate = convertAppointmentV1ToV2({ ...current, ...payload })
+  await updateDoc(scheduleRef, parseAppointmentForUpdate(candidate, current, serverTimestamp()))
+}
 
-  await runTransaction(db, async (transaction) => {
-    const scheduleSnapshot = await transaction.get(scheduleRef)
-    const patientSnapshot = await transaction.get(patientRef)
+/**
+ * Cancela um agendamento via fluxo governado.
+ * Reutiliza integralmente transitionAppointmentStatus — mesma transação,
+ * mesmo histórico, mesma idempotência, sem débito de sessão.
+ *
+ * @param {string} scheduleId
+ * @param {string} patientId
+ * @param {string} actorId
+ * @param {string} reason
+ * @returns {Promise}
+ */
+export async function cancelSchedule(scheduleId, patientId, actorId, reason) {
+  if (!reason || reason.trim().length < 5) {
+    throw new Error('Justificativa obrigatória para cancelamento.')
+  }
+  return transitionAppointmentStatus({
+    appointmentId: scheduleId,
+    patientId,
+    targetStatus: 'cancelled_by_professional',
+    actorId,
+    operationId: crypto.randomUUID(),
+    reason: reason.trim(),
+  })
+}
+
+/**
+ * @deprecated Exclusão física de agendamento não é permitida.
+ * Use cancelSchedule() para cancelamento governado.
+ */
+export function removeSchedule(_scheduleId) {
+  throw new Error(
+    'Exclusão física de agendamento não é permitida. ' +
+    'Use cancelSchedule() para cancelamento governado.'
+  )
+}
+
+function replayResult(operationSnapshot, { appointmentId, targetStatus, actorId }) {
+  if (!operationSnapshot.exists()) return null
+  const previous = operationSnapshot.data()
+  if (previous.status !== targetStatus || previous.actorId !== actorId) {
+    const error = new Error('Identificador de operação reutilizado com dados diferentes.')
+    error.code = 'appointment/idempotency-conflict'
+    throw error
+  }
+  return {
+    replayed: true,
+    appointmentId,
+    status: targetStatus,
+    rescheduledToId: previous.linkedScheduleId || null,
+  }
+}
+
+/**
+ * Conclusão de agendamento — debita sessão e decide auto-alta do paciente.
+ * Campos protegidos pelas Firestore Rules (status/completedSessions/
+ * remainingSessions/administrative do paciente) nunca são escritos pelo
+ * cliente: a transação inteira roda no backend (api/schedules/[scheduleId]/complete.js).
+ */
+async function completeAppointmentGoverned({ appointmentId, patientId, operationId, reason, homeCareVisit }) {
+  const idToken = await auth.currentUser?.getIdToken()
+  if (!idToken) {
+    const error = new Error('Usuário não autenticado.')
+    error.code = 'UNAUTHENTICATED'
+    throw error
+  }
+  const res = await fetch(`/api/schedules/${appointmentId}/complete`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ patientId, operationId, reason, homeCareVisit: homeCareVisit || undefined }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const error = new Error(data.error?.message || 'Não foi possível concluir o atendimento.')
+    error.code = data.error?.code || 'INTERNAL_ERROR'
+    throw error
+  }
+  return data
+}
+
+export async function transitionAppointmentStatus({
+  appointmentId, patientId, targetStatus, actorId, operationId, reason = '', reschedule = null,
+  homeCareVisit = null,
+}) {
+  if (!operationId) throw new Error('Identificador da operação é obrigatório.')
+  if (!actorId) throw new Error('Usuário responsável é obrigatório.')
+
+  const normalizedTarget = appointmentStatusToV2(targetStatus)
+
+  // Toda transição que entra em 'completed' debita sessão e pode auto-dar-alta
+  // no paciente — governado exclusivamente pelo backend (nunca client-side).
+  if (normalizedTarget === 'completed') {
+    return completeAppointmentGoverned({ appointmentId, patientId, operationId, reason, homeCareVisit })
+  }
+
+  const scheduleRef = doc(db, 'schedules', appointmentId)
+  const historyRef = doc(db, 'schedules', appointmentId, 'statusHistory', operationId)
+  const visitRef = homeCareVisit ? doc(db, 'schedules', appointmentId, 'homeCareVisit', 'current') : null
+  const newScheduleRef = reschedule ? doc(schedulesCollection) : null
+
+  return runTransaction(db, async (transaction) => {
+    const [operationSnapshot, scheduleSnapshot, visitSnapshot] = await Promise.all([
+      transaction.get(historyRef), transaction.get(scheduleRef),
+      visitRef ? transaction.get(visitRef) : Promise.resolve(null),
+    ])
+    const replay = replayResult(operationSnapshot, { appointmentId, targetStatus: normalizedTarget, actorId })
+    if (replay) return replay
     if (!scheduleSnapshot.exists()) throw new Error('Agendamento não encontrado.')
-    if (!patientSnapshot.exists()) throw new Error('Paciente não encontrado.')
 
     const schedule = scheduleSnapshot.data()
-    if (schedule.patientId !== patientId) throw new Error('Agendamento não pertence ao paciente.')
-
-    const wasDeducted = schedule.sessionDeducted === true
-    const shouldDeduct = deductSession === true
-    const adjustment = Number(shouldDeduct) - Number(wasDeducted)
-    const patient = patientSnapshot.data()
-
-    if (adjustment !== 0) {
-      const completedSessions = Math.max((Number(patient.completedSessions) || 0) + adjustment, 0)
-      const remainingSessions = Math.max((Number(patient.totalSessions) || 0) - completedSessions, 0)
-      transaction.update(patientRef, {
-        completedSessions,
-        remainingSessions,
-        status: remainingSessions > 0 ? 'Ativo' : 'Finalizado',
-        updatedAt: serverTimestamp(),
-      })
+    if (schedule.patientId !== patientId || schedule.userId !== actorId) {
+      throw new Error('Agendamento não pertence ao usuário autenticado.')
     }
 
-    transaction.update(scheduleRef, {
-      status,
+    const normalizedSchedule = normalizeAppointmentDocument({ id: appointmentId, ...schedule })
+    const nextStatus = assertAppointmentTransition(normalizedSchedule.appointmentStatusV2, normalizedTarget)
+    const timestamp = serverTimestamp()
+
+    if (homeCareVisit) {
+      if (!visitSnapshot?.exists()) throw new Error('Visita não encontrada.')
+      const currentVisit = visitSnapshot.data()
+      if (currentVisit.userId !== actorId || currentVisit.patientId !== patientId) {
+        throw new Error('Vínculo da visita inválido.')
+      }
+      transaction.update(visitRef, buildVisitTransitionUpdate(currentVisit, homeCareVisit.targetStatus, homeCareVisit.details || {}, operationId, timestamp))
+    }
+
+    const scheduleUpdate = {
+      schemaVersion: 2,
+      status: nextStatus,
       statusReason: reason,
-      statusUpdatedAt: serverTimestamp(),
-      sessionDeducted: shouldDeduct,
-      updatedAt: serverTimestamp(),
-    })
+      statusUpdatedAt: timestamp,
+      sessionDeducted: nextStatus === 'completed',
+      sessionAccounting: {
+        ...(schedule.sessionAccounting || {}),
+        deductSession: nextStatus === 'completed',
+        deductedAt: nextStatus === 'completed' ? timestamp : null,
+        deductionOperationId: nextStatus === 'completed' ? operationId : null,
+      },
+      ...(newScheduleRef ? { rescheduledToId: newScheduleRef.id } : {}),
+      updatedAt: timestamp,
+    }
+    transaction.update(scheduleRef, parseAppointmentForUpdate(
+      scheduleUpdate, convertAppointmentV1ToV2(schedule), timestamp,
+    ))
+
+    if (newScheduleRef) {
+      const candidate = convertAppointmentV1ToV2({
+        ...schedule,
+        status: 'scheduled',
+        date: reschedule.date,
+        startTime: reschedule.startTime,
+        endTime: reschedule.endTime,
+        scheduledStart: new Date(`${reschedule.date}T${reschedule.startTime}:00`),
+        scheduledEnd: new Date(`${reschedule.date}T${reschedule.endTime}:00`),
+        rescheduledFromId: appointmentId,
+        sessionAccounting: { deductSession: false, deductedAt: null, deductionOperationId: null },
+        createdAt: timestamp,
+        createdBy: actorId,
+      })
+      transaction.set(newScheduleRef, parseAppointmentForCreate(candidate, actorId, timestamp))
+    }
+
     transaction.set(historyRef, {
-      previousStatus: schedule.status || 'Agendado',
-      status,
+      previousStatus: normalizedSchedule.appointmentStatusV2,
+      status: nextStatus,
       reason,
-      deductSession: shouldDeduct,
-      changedAt: serverTimestamp(),
+      actorId,
+      operationId,
+      deductSession: nextStatus === 'completed',
+      linkedScheduleId: newScheduleRef?.id || null,
+      changedAt: timestamp,
     })
+    return {
+      replayed: false,
+      appointmentId,
+      status: nextStatus,
+      rescheduledToId: newScheduleRef?.id || null,
+    }
   })
 }
 
-export async function rescheduleAppointment(scheduleId, { date, startTime, endTime, reason = '' }) {
-  const scheduleRef = doc(db, 'schedules', scheduleId)
-  const newScheduleRef = doc(schedulesCollection)
-  const historyRef = doc(collection(scheduleRef, 'statusHistory'))
-
-  await runTransaction(db, async (transaction) => {
-    const scheduleSnapshot = await transaction.get(scheduleRef)
-    if (!scheduleSnapshot.exists()) throw new Error('Agendamento não encontrado.')
-    const schedule = scheduleSnapshot.data()
-    const patientRef = doc(db, 'patients', schedule.patientId)
-    const patientSnapshot = await transaction.get(patientRef)
-    if (!patientSnapshot.exists()) throw new Error('Paciente não encontrado.')
-    if (schedule.status === 'Realizado' || schedule.evolutionId) {
-      throw new Error('Atendimentos realizados não podem ser reagendados.')
-    }
-    if (schedule.status === 'Reagendado' || schedule.rescheduledToId) {
-      throw new Error('Este agendamento já foi reagendado.')
-    }
-
-    if (schedule.sessionDeducted === true) {
-      const patient = patientSnapshot.data()
-      const completedSessions = Math.max((Number(patient.completedSessions) || 0) - 1, 0)
-      const remainingSessions = Math.max((Number(patient.totalSessions) || 0) - completedSessions, 0)
-      transaction.update(patientRef, {
-        completedSessions,
-        remainingSessions,
-        status: remainingSessions > 0 ? 'Ativo' : 'Finalizado',
-        updatedAt: serverTimestamp(),
-      })
-    }
-
-    transaction.set(newScheduleRef, {
-      patientId: schedule.patientId,
-      patientName: schedule.patientName,
-      sessionType: schedule.sessionType,
-      notes: schedule.notes || '',
-      userId: schedule.userId,
-      date,
-      startTime,
-      endTime,
-      status: 'Agendado',
-      rescheduledFromId: scheduleId,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    })
-    transaction.update(scheduleRef, {
-      status: 'Reagendado',
-      statusReason: reason,
-      statusUpdatedAt: serverTimestamp(),
-      rescheduledToId: newScheduleRef.id,
-      sessionDeducted: false,
-      updatedAt: serverTimestamp(),
-    })
-    transaction.set(historyRef, {
-      previousStatus: schedule.status || 'Agendado',
-      status: 'Reagendado',
-      reason,
-      deductSession: false,
-      linkedScheduleId: newScheduleRef.id,
-      changedAt: serverTimestamp(),
-    })
+export function changeScheduleStatus(scheduleId, patientId, options) {
+  return transitionAppointmentStatus({
+    appointmentId: scheduleId,
+    patientId,
+    targetStatus: options.status,
+    ...options,
   })
+}
 
-  return newScheduleRef.id
+export function rescheduleAppointment(scheduleId, options) {
+  const { patientId, actorId, operationId, date, startTime, endTime, reason = '' } = options
+  return transitionAppointmentStatus({
+    appointmentId: scheduleId,
+    patientId,
+    targetStatus: 'rescheduled',
+    actorId,
+    operationId,
+    reason,
+    reschedule: { date, startTime, endTime },
+  }).then((result) => result.rescheduledToId)
 }

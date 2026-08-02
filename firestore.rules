@@ -6,6 +6,66 @@ service cloud.firestore {
         get(/databases/$(database)/documents/patients/$(patientId)).data.userId == request.auth.uid;
     }
 
+    function canonicalPatientStatus(status) {
+      return status == 'Ativo' ? 'active' : status == 'Inativo' ? 'inactive' :
+        status == 'Finalizado' ? 'discharged' : status == 'Arquivado' ? 'archived' : status;
+    }
+
+    function validPatientDocument(data) {
+      return !('schemaVersion' in data) || (
+        data.schemaVersion == 2 && data.userId is string &&
+        data.personalData is map && data.personalData.fullName is string && data.personalData.fullName.size() > 0 &&
+        data.homeCare is map && data.homeCare.enabled is bool &&
+        data.status in ['active', 'inactive', 'discharged', 'archived', 'restricted']
+      );
+    }
+
+    function validScheduleDocument(data) {
+      return !('schemaVersion' in data) || (
+        data.schemaVersion == 2 && data.userId is string && data.patientId is string &&
+        data.serviceType in ['clinic', 'home_care', 'online'] &&
+        data.status in ['scheduled','confirmed','in_transit','arrived','completed','patient_absent','cancelled_by_patient','cancelled_by_professional','rescheduled'] &&
+        data.sessionAccounting is map && data.sessionAccounting.deductSession is bool &&
+        data.sessionAccounting.deductSession == (data.status == 'completed')
+      );
+    }
+
+    function canonicalScheduleStatus(status) {
+      return status == 'Agendado' ? 'scheduled' : status == 'Confirmado' ? 'confirmed' :
+        status == 'Em deslocamento' ? 'in_transit' : status == 'Chegou' ? 'arrived' :
+        status == 'Realizado' ? 'completed' : status == 'Falta' ? 'patient_absent' :
+        status == 'Cancelado pelo paciente' ? 'cancelled_by_patient' :
+        status == 'Cancelado pela profissional' ? 'cancelled_by_professional' :
+        status == 'Reagendado' ? 'rescheduled' : status;
+    }
+
+    function validScheduleTransition(before, after) {
+      let current = canonicalScheduleStatus(before.status);
+      let target = canonicalScheduleStatus(after.status);
+      return current == target ||
+        (current == 'scheduled' && target in ['confirmed','in_transit','arrived','completed','patient_absent','cancelled_by_patient','cancelled_by_professional','rescheduled']) ||
+        (current == 'confirmed' && target in ['scheduled','in_transit','arrived','completed','patient_absent','cancelled_by_patient','cancelled_by_professional','rescheduled']) ||
+        (current == 'in_transit' && target in ['arrived','completed','cancelled_by_patient','cancelled_by_professional','rescheduled']) ||
+        (current == 'arrived' && target in ['completed','patient_absent','cancelled_by_patient','cancelled_by_professional','rescheduled']) ||
+        (current in ['patient_absent','cancelled_by_patient','cancelled_by_professional'] && target == 'rescheduled');
+    }
+
+    function validHomeCareVisit(data, scheduleId) {
+      return data.schemaVersion == 1 && data.appointmentId == scheduleId &&
+        data.patientId is string && data.professionalId is string && data.userId is string &&
+        data.status in ['planned','in_transit','arrived','in_service','completed','patient_absent','cancelled'] &&
+        data['location'] is map && data['location']['addressSnapshot'] is map &&
+        data['travel'] is map && data['service'] is map && data['occurrence'] is map;
+    }
+
+    function validHomeCareTransition(before, after) {
+      return before.status == after.status ||
+        (before.status == 'planned' && after.status in ['in_transit','patient_absent','cancelled']) ||
+        (before.status == 'in_transit' && after.status in ['arrived','cancelled']) ||
+        (before.status == 'arrived' && after.status in ['in_service','patient_absent']) ||
+        (before.status == 'in_service' && after.status == 'completed');
+    }
+
     match /users/{userId} {
       allow read: if request.auth != null && request.auth.uid == userId;
       allow create: if request.auth != null &&
@@ -33,12 +93,21 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // =========================================================================
+    // PACIENTES — exclusão direta bloqueada; alteração de status governada via backend
+    // =========================================================================
     match /patients/{patientId} {
-      allow read, delete: if request.auth != null && resource.data.userId == request.auth.uid;
-      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow delete: if false;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid && validPatientDocument(request.resource.data);
       allow update: if request.auth != null &&
         resource.data.userId == request.auth.uid &&
-        request.resource.data.userId == request.auth.uid;
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == resource.data.userId &&
+        validPatientDocument(request.resource.data) &&
+        !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['statusReason', 'statusChangedAt', 'statusChangedBy']) &&
+        canonicalPatientStatus(resource.data.status) == canonicalPatientStatus(request.resource.data.status);
 
       match /evolutions/{evolutionId} {
         // O registro original é imutável após a criação: exclusão nunca é
@@ -51,7 +120,8 @@ service cloud.firestore {
         allow create: if isPatientOwner(patientId);
         allow update: if isPatientOwner(patientId) &&
           resource.data.get('voided', false) != true &&
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['voided', 'voidedAt', 'voidedBy', 'voidReason']) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'voided', 'voidedAt', 'voidedBy', 'voidReason']) &&
+          request.resource.data.status == 'voided' &&
           request.resource.data.voided == true &&
           request.resource.data.get('voidedBy', '') == request.auth.uid &&
           request.resource.data.voidReason is string &&
@@ -67,6 +137,11 @@ service cloud.firestore {
         match /qualityReviews/{reviewId} {
           allow read: if isPatientOwner(patientId);
           allow write: if false;
+        }
+
+        match /attachments/{attachmentId} {
+          allow read: if isPatientOwner(patientId);
+          allow create, update, delete: if false;
         }
       }
 
@@ -91,22 +166,86 @@ service cloud.firestore {
       }
 
       match /documents/{documentId} {
-        allow read, write: if request.auth != null &&
-          get(/databases/$(database)/documents/patients/$(patientId)).data.userId == request.auth.uid;
+        // O proprietario pode ler o registro documental. A interface usa a
+        // API sanitizada; scans, versoes e todas as mutacoes ficam no backend.
+        allow read: if isPatientOwner(patientId);
+        allow create, update, delete: if false;
+
+        match /securityScans/{scanId} {
+          allow read: if false;
+          allow create, update, delete: if false;
+        }
+
+        match /versions/{versionId} {
+          // Conteúdo e metadados são legíveis pelo proprietário; qualquer
+          // mutação, inclusive troca de status e assinatura, é backend-only.
+          allow read: if isPatientOwner(patientId);
+          allow create, update, delete: if false;
+
+          match /integrityChecks/{checkId} {
+            allow read: if isPatientOwner(patientId);
+            allow create, update, delete: if false;
+          }
+        }
+      }
+
+      match /consents/{consentId} {
+        allow read: if isPatientOwner(patientId);
+        allow create, update, delete: if false;
       }
     }
 
+    // =========================================================================
+    // AGENDAMENTOS — exclusão direta bloqueada; cancelamento via transação
+    // =========================================================================
     match /schedules/{scheduleId} {
-      allow read, delete: if request.auth != null && resource.data.userId == request.auth.uid;
-      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow delete: if false;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid && validScheduleDocument(request.resource.data);
       allow update: if request.auth != null &&
         resource.data.userId == request.auth.uid &&
-        request.resource.data.userId == request.auth.uid;
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == resource.data.userId &&
+        validScheduleDocument(request.resource.data) &&
+        validScheduleTransition(resource.data, request.resource.data);
 
       match /statusHistory/{historyId} {
-        allow read, create: if request.auth != null &&
+        allow read: if request.auth != null &&
           get(/databases/$(database)/documents/schedules/$(scheduleId)).data.userId == request.auth.uid;
+        allow create: if request.auth != null &&
+          get(/databases/$(database)/documents/schedules/$(scheduleId)).data.userId == request.auth.uid &&
+          request.resource.data.actorId == request.auth.uid &&
+          request.resource.data.operationId == historyId;
         allow update, delete: if false;
+      }
+
+      match /homeCareVisit/{visitId} {
+        allow read: if request.auth != null &&
+          get(/databases/$(database)/documents/schedules/$(scheduleId)).data.userId == request.auth.uid;
+        allow create: if request.auth != null && visitId == 'current' &&
+          get(/databases/$(database)/documents/schedules/$(scheduleId)).data.userId == request.auth.uid &&
+          request.resource.data.userId == request.auth.uid && request.resource.data.professionalId == request.auth.uid &&
+          request.resource.data.status == 'planned' && validHomeCareVisit(request.resource.data, scheduleId);
+        allow update: if request.auth != null &&
+          get(/databases/$(database)/documents/schedules/$(scheduleId)).data.userId == request.auth.uid &&
+          resource.data.status != 'completed' && resource.data.status != 'patient_absent' && resource.data.status != 'cancelled' &&
+          request.resource.data.userId == resource.data.userId && request.resource.data.patientId == resource.data.patientId &&
+          request.resource.data.appointmentId == resource.data.appointmentId && request.resource.data.professionalId == resource.data.professionalId &&
+          request.resource.data.createdAt == resource.data.createdAt && request.resource.data.createdBy == resource.data.createdBy &&
+          validHomeCareVisit(request.resource.data, scheduleId) && validHomeCareTransition(resource.data, request.resource.data);
+        allow delete: if false;
+
+        match /attachments/{attachmentId} {
+          allow read: if request.auth != null &&
+            get(/databases/$(database)/documents/schedules/$(scheduleId)).data.userId == request.auth.uid;
+          allow create, update, delete: if false;
+        }
+      }
+
+      match /attachments/{attachmentId} {
+        allow read: if request.auth != null &&
+          get(/databases/$(database)/documents/schedules/$(scheduleId)).data.userId == request.auth.uid;
+        allow create, update, delete: if false;
       }
     }
 
@@ -116,6 +255,36 @@ service cloud.firestore {
     }
 
     match /evolutionFinalizeRateLimits/{identifier} {
+      allow read, write: if false;
+    }
+
+    match /consentOperations/{requestId} {
+      allow read, write: if false;
+    }
+
+    match /documentStorageOperations/{requestId} {
+      allow read, write: if false;
+    }
+
+    match /clinicalAttachmentOperations/{requestId} {
+      allow read, write: if false;
+    }
+
+    match /documentVersionOperations/{requestId} {
+      allow read, write: if false;
+    }
+
+    // Operações de mudança de status de paciente — backend only
+    match /patientStatusOperations/{requestId} {
+      allow read, write: if false;
+    }
+
+    // Idempotência da conclusão governada de evolução clínica — backend only
+    match /evolutionCreateOperations/{operationId} {
+      allow read, write: if false;
+    }
+
+    match /retentionPolicies/{policyId} {
       allow read, write: if false;
     }
 
