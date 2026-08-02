@@ -5,9 +5,10 @@ import EmptyState from '../components/common/EmptyState'
 import SkeletonTable from '../components/common/SkeletonTable'
 import PatientFormModal from '../components/patients/PatientFormModal'
 import PatientTable from '../components/patients/PatientTable'
+import PatientStatusDialog from '../components/patients/PatientStatusDialog'
 import EvolutionModal from '../components/patients/EvolutionModal'
 import { useAuth } from '../contexts/useAuth'
-import { createPatient, removePatient, searchPatients, updatePatient } from '../services/patientService'
+import { createPatient, searchPatients, updatePatient } from '../services/patientService'
 import { normalizePatientPayload } from '../utils/patient'
 import { onlyDigits } from '../utils/validators'
 
@@ -23,6 +24,10 @@ function PatientsPage() {
   // Estados para o modal de evoluções
   const [isEvolutionOpen, setIsEvolutionOpen] = useState(false)
   const [evolutionPatient, setEvolutionPatient] = useState(null)
+
+  // Estado para diálogo de alteração de status
+  const [isStatusDialogOpen, setIsStatusDialogOpen] = useState(false)
+  const [statusPatient, setStatusPatient] = useState(null)
 
   const filteredPatients = useMemo(() => {
     if (indexedResults) return indexedResults
@@ -58,7 +63,7 @@ function PatientsPage() {
         const merged = new Map([...results, ...compatibleLocalResults].map((patient) => [patient.id, patient]))
         if (active) setIndexedResults([...merged.values()])
       } catch (error) {
-        // MantÃ©m a busca local como fallback enquanto o Ã­ndice Ã© implantado.
+        // Mantém a busca local como fallback enquanto o índice é implantado.
         console.warn('Indexed patient search unavailable:', error?.code || error?.name)
         if (active) setIndexedResults(null)
       }
@@ -118,16 +123,16 @@ function PatientsPage() {
     }
   }
 
-  const handleDeletePatient = async (patient) => {
-    const confirmed = window.confirm(`Deseja realmente excluir ${patient.name}?`)
-    if (!confirmed) return
+  const handleDeletePatient = (patient) => {
+    setStatusPatient(patient)
+    setIsStatusDialogOpen(true)
+  }
 
-    try {
-      await removePatient(patient.id)
-      toast.success('Paciente removido com sucesso.')
-    } catch (error) {
-      toast.error('Não foi possível remover o paciente.')
-      console.error(error)
+  const handleStatusChanged = (result) => {
+    // A lista será atualizada via subscribePatients (snapshot em tempo real).
+    // Não há necessidade de mutação local — o observável já reflete a mudança.
+    if (result?.replayed) {
+      // Operações replay não alteram estado — apenas confirmam.
     }
   }
 
@@ -191,6 +196,16 @@ function PatientsPage() {
         isOpen={isEvolutionOpen}
         onClose={closeEvolutionModal}
         patient={evolutionPatient}
+      />
+
+      <PatientStatusDialog
+        isOpen={isStatusDialogOpen}
+        onClose={() => {
+          setIsStatusDialogOpen(false)
+          setStatusPatient(null)
+        }}
+        patient={statusPatient}
+        onStatusChanged={handleStatusChanged}
       />
     </div>
   )

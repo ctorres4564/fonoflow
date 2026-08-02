@@ -6,12 +6,17 @@ service cloud.firestore {
         get(/databases/$(database)/documents/patients/$(patientId)).data.userId == request.auth.uid;
     }
 
+    function canonicalPatientStatus(status) {
+      return status == 'Ativo' ? 'active' : status == 'Inativo' ? 'inactive' :
+        status == 'Finalizado' ? 'discharged' : status == 'Arquivado' ? 'archived' : status;
+    }
+
     function validPatientDocument(data) {
       return !('schemaVersion' in data) || (
         data.schemaVersion == 2 && data.userId is string &&
         data.personalData is map && data.personalData.fullName is string && data.personalData.fullName.size() > 0 &&
         data.homeCare is map && data.homeCare.enabled is bool &&
-        data.status in ['active', 'inactive', 'discharged', 'archived']
+        data.status in ['active', 'inactive', 'discharged', 'archived', 'restricted']
       );
     }
 
@@ -88,14 +93,21 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // =========================================================================
+    // PACIENTES — exclusão direta bloqueada; alteração de status governada via backend
+    // =========================================================================
     match /patients/{patientId} {
-      allow read, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow delete: if false;
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid && validPatientDocument(request.resource.data);
       allow update: if request.auth != null &&
         resource.data.userId == request.auth.uid &&
         request.resource.data.userId == request.auth.uid &&
         request.resource.data.userId == resource.data.userId &&
-        validPatientDocument(request.resource.data);
+        validPatientDocument(request.resource.data) &&
+        !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['statusReason', 'statusChangedAt', 'statusChangedBy']) &&
+        canonicalPatientStatus(resource.data.status) == canonicalPatientStatus(request.resource.data.status);
 
       match /evolutions/{evolutionId} {
         // O registro original é imutável após a criação: exclusão nunca é
@@ -183,8 +195,12 @@ service cloud.firestore {
       }
     }
 
+    // =========================================================================
+    // AGENDAMENTOS — exclusão direta bloqueada; cancelamento via transação
+    // =========================================================================
     match /schedules/{scheduleId} {
-      allow read, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow delete: if false;
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid && validScheduleDocument(request.resource.data);
       allow update: if request.auth != null &&
         resource.data.userId == request.auth.uid &&
@@ -255,6 +271,16 @@ service cloud.firestore {
     }
 
     match /documentVersionOperations/{requestId} {
+      allow read, write: if false;
+    }
+
+    // Operações de mudança de status de paciente — backend only
+    match /patientStatusOperations/{requestId} {
+      allow read, write: if false;
+    }
+
+    // Idempotência da conclusão governada de evolução clínica — backend only
+    match /evolutionCreateOperations/{operationId} {
       allow read, write: if false;
     }
 

@@ -85,6 +85,73 @@ describe('patients', () => {
 
     await assertFails(getDoc(doc(anonymousDb, 'patients', 'patient-a')))
   })
+
+  it('impede o proprietário de excluir o próprio paciente', async () => {
+    await seed('patients/patient-a', { name: 'Paciente A', userId: 'professional-a' })
+    const ownerDb = firestoreFor('professional-a')
+
+    await assertFails(deleteDoc(doc(ownerDb, 'patients', 'patient-a')))
+  })
+
+  it('impede outro usuário de excluir o paciente', async () => {
+    await seed('patients/patient-a', { name: 'Paciente A', userId: 'professional-a' })
+    const otherDb = firestoreFor('professional-b')
+
+    await assertFails(deleteDoc(doc(otherDb, 'patients', 'patient-a')))
+  })
+})
+
+describe('proteção de status do paciente', () => {
+  const seedStatusPatient = () => seed('patients/patient-status', {
+    schemaVersion: 2, userId: 'professional-a', status: 'active',
+    personalData: { fullName: 'Paciente Status' }, homeCare: { enabled: true },
+  })
+
+  it('impede o cliente de alterar status diretamente', async () => {
+    await seedStatusPatient()
+    const db = firestoreFor('professional-a')
+    await assertFails(updateDoc(doc(db, 'patients', 'patient-status'), { status: 'inactive' }))
+  })
+
+  it('impede o cliente de alterar statusReason diretamente', async () => {
+    await seedStatusPatient()
+    const db = firestoreFor('professional-a')
+    await assertFails(updateDoc(doc(db, 'patients', 'patient-status'), { statusReason: 'Motivo forjado' }))
+  })
+
+  it('impede o cliente de alterar statusChangedAt diretamente', async () => {
+    await seedStatusPatient()
+    const db = firestoreFor('professional-a')
+    await assertFails(updateDoc(doc(db, 'patients', 'patient-status'), { statusChangedAt: '2026-08-01T00:00:00.000Z' }))
+  })
+
+  it('impede o cliente de alterar statusChangedBy diretamente', async () => {
+    await seedStatusPatient()
+    const db = firestoreFor('professional-a')
+    await assertFails(updateDoc(doc(db, 'patients', 'patient-status'), { statusChangedBy: 'professional-a' }))
+  })
+
+  it('permite atualizações cadastrais legítimas sem tocar nos campos de status', async () => {
+    await seedStatusPatient()
+    const db = firestoreFor('professional-a')
+    await assertSucceeds(updateDoc(doc(db, 'patients', 'patient-status'), {
+      personalData: { fullName: 'Nome Atualizado' },
+    }))
+  })
+
+  it('impede leitura e escrita em patientStatusOperations pelo cliente', async () => {
+    const db = firestoreFor('professional-a')
+    const opRef = doc(db, 'patientStatusOperations/request-1')
+    await assertFails(getDoc(opRef))
+    await assertFails(setDoc(opRef, { patientId: 'patient-status', actorId: 'professional-a' }))
+  })
+
+  it('impede leitura e escrita em evolutionCreateOperations pelo cliente', async () => {
+    const db = firestoreFor('professional-a')
+    const opRef = doc(db, 'evolutionCreateOperations/request-1')
+    await assertFails(getDoc(opRef))
+    await assertFails(setDoc(opRef, { patientId: 'patient-status', uid: 'professional-a' }))
+  })
 })
 
 describe('schedule V2', () => {
@@ -93,6 +160,22 @@ describe('schedule V2', () => {
     const base = { schemaVersion:2,userId:'professional-a',patientId:'patient-a',serviceType:'home_care',status:'scheduled',sessionAccounting:{deductSession:false} }
     await assertSucceeds(setDoc(doc(db,'schedules','v2-ok'),base))
     await assertFails(setDoc(doc(db,'schedules','v2-invalid'),{...base,sessionAccounting:{deductSession:'yes'}}))
+  })
+})
+
+describe('exclusão de agendamentos', () => {
+  beforeEach(async () => {
+    await seed('schedules/schedule-delete', { schemaVersion: 2, userId: 'professional-a', patientId: 'patient-a', serviceType: 'clinic', status: 'scheduled', sessionAccounting: { deductSession: false } })
+  })
+
+  it('impede o proprietário de excluir o próprio agendamento', async () => {
+    const db = firestoreFor('professional-a')
+    await assertFails(deleteDoc(doc(db, 'schedules', 'schedule-delete')))
+  })
+
+  it('impede outro usuário de excluir o agendamento', async () => {
+    const db = firestoreFor('professional-b')
+    await assertFails(deleteDoc(doc(db, 'schedules', 'schedule-delete')))
   })
 })
 

@@ -37,3 +37,14 @@ export function calculateSessionAccounting(patient, enteringCompleted) {
   const next=completed+1
   return { completedSessions:next, remainingSessions:Math.max(contracted-next,0), changed:true }
 }
+
+// Único ponto de decisão da auto-alta (active -> discharged ao esgotar sessões).
+// Nunca reabre discharged e nunca mexe em inactive/restricted/archived — essas
+// transições de status são exclusivamente manuais, via fluxo governado.
+const AUTO_DISCHARGE_SOURCE_STATUSES = Object.freeze(['active'])
+
+export function resolvePatientStatusAfterAccounting(currentStatus, remainingSessions) {
+  if (remainingSessions > 0) return currentStatus
+  if (!AUTO_DISCHARGE_SOURCE_STATUSES.includes(currentStatus)) return currentStatus
+  return 'discharged'
+}

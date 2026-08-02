@@ -3,7 +3,7 @@ import { calculateEvolutionSha256, prepareEvolutionFinalizeOperation } from './e
 import { validateFinalizePayload, validateIdempotencyKey } from './evolutionFinalizeValidation.js'
 import { FINALIZE_ERROR_CODES, finalizeError } from './evolutionFinalizeErrors.js'
 import { parseAppointmentForUpdate, parseEvolutionFinalize, parsePatientForUpdate } from '../../src/schemas/persistence.parsers.js'
-import { calculateSessionAccounting } from '../../src/domain/appointments/appointmentTransitions.js'
+import { buildPatientAccountingPatch } from './patientAccountingWorkflow.js'
 import { normalizePatientDocument } from '../../src/mappers/patient.mapper.js'
 import { normalizeAppointmentDocument } from '../../src/mappers/appointment.mapper.js'
 import { convertAppointmentV1ToV2 } from '../../src/mappers/appointment.mapper.js'
@@ -204,8 +204,8 @@ export async function finalizeEvolutionCreate({ uid, method = 'POST', idempotenc
 
     const patientUpdates = { updatedAt: timestamp }
     if (validated.incrementSession) {
-      const accounting = calculateSessionAccounting(normalizedPatient, true)
-      Object.assign(patientUpdates, { completedSessions: accounting.completedSessions, remainingSessions: accounting.remainingSessions, administrative: { ...currentPatientV2.administrative, completedSessions: accounting.completedSessions }, status: accounting.remainingSessions > 0 ? 'active' : 'discharged' })
+      const { patch } = buildPatientAccountingPatch(currentPatientV2, timestamp)
+      Object.assign(patientUpdates, patch)
     }
     if (plan && operation.evolution.objectiveProgress.length > 0) {
       const objectives = applyObjectiveProgress(plan.objectives, operation.evolution.objectiveProgress, now)

@@ -1,6 +1,6 @@
 import { doc, getDoc, onSnapshot, runTransaction, serverTimestamp } from 'firebase/firestore'
 import { db } from '../firebase/config'
-import { assertHomeCareVisitTransition, homeCareVisitToAppointmentStatus } from '../domain/homeCare/homeCareVisitTransitions'
+import { assertHomeCareVisitTransition, buildVisitTransitionUpdate, homeCareVisitToAppointmentStatus } from '../domain/homeCare/homeCareVisitTransitions'
 import { createHomeCareAddressSnapshot, parseHomeCareVisitCreate } from '../schemas/homeCareVisit.schema'
 import { transitionAppointmentStatus } from './scheduleService'
 import { recordAuditEvent } from './auditService'
@@ -40,18 +40,6 @@ const eventByStatus = {
   completed: 'HOME_CARE_VISIT_COMPLETED', patient_absent: 'HOME_CARE_PATIENT_ABSENT', cancelled: 'HOME_CARE_VISIT_CANCELLED',
 }
 
-function buildVisitTransitionUpdate(current, targetStatus, details, operationId, timestamp, now = new Date()) {
-  assertHomeCareVisitTransition(current.status, targetStatus)
-  const travel = { ...current.travel }
-  const service = { ...current.service }
-  if (targetStatus === 'in_transit') { travel.departureAt = timestamp; travel.transportationMode = details.transportationMode || null; travel.estimatedDistanceKm = details.estimatedDistanceKm ?? null }
-  if (targetStatus === 'arrived') { travel.arrivalAt = timestamp; travel.travelDurationMinutes = travel.departureAt ? Math.max(0, Math.round((now - (travel.departureAt.toDate?.() || travel.departureAt)) / 60000)) : null }
-  if (targetStatus === 'in_service') { service.startedAt = timestamp; service.caregiverPresent = details.caregiverPresent ?? null; service.caregiverName = details.caregiverName || null }
-  if (targetStatus === 'completed') { service.endedAt = timestamp; service.durationMinutes = service.startedAt ? Math.max(0, Math.round((now - (service.startedAt.toDate?.() || service.startedAt)) / 60000)) : null; travel.actualDistanceKm = details.actualDistanceKm ?? travel.actualDistanceKm }
-  const occurrence = details.occurrence || (targetStatus === 'patient_absent' ? { type: 'patient_absent', description: details.reason || 'Paciente ausente.' } : current.occurrence)
-  return { status: targetStatus, travel, service, occurrence, updatedAt: timestamp, updatedBy: current.userId, lastOperationId: operationId }
-}
-
 export async function transitionHomeCareVisit({ appointment, patient, actorId, targetStatus, operationId, details = {} }) {
   const reference = currentVisitRef(appointment.id)
   let current = await ensureHomeCareVisit({ appointment, patient, actorId })
@@ -63,13 +51,7 @@ export async function transitionHomeCareVisit({ appointment, patient, actorId, t
     await transitionAppointmentStatus({
       appointmentId: appointment.id, patientId: patient.id, targetStatus: appointmentTarget,
       actorId, operationId, reason: details.reason || '',
-      transactionalMutation: async ({ transaction, timestamp }) => {
-        const snapshot = await transaction.get(reference)
-        if (!snapshot.exists()) throw new Error('Visita não encontrada.')
-        current = snapshot.data()
-        if (current.userId !== actorId || current.patientId !== patient.id) throw new Error('Vínculo da visita inválido.')
-        transaction.update(reference, buildVisitTransitionUpdate(current, targetStatus, details, operationId, timestamp))
-      },
+      homeCareVisit: { targetStatus, details },
     })
   } else {
     await runTransaction(db, async (transaction) => {
